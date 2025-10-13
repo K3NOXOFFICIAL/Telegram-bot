@@ -53,36 +53,29 @@ export class TopicManager {
   }
 
   /**
-   * Scannt ein Topic nach existierenden Dateien und speichert sie in Redis
-   * Merged neue Dateien mit bereits gespeicherten (überschreibt nicht!)
+   * Lädt Topic-Dateien aus Redis Cache
+   * 
+   * ⚠️ WICHTIG: Kein API-Scan mehr, da Webhook aktiv ist und getUpdates blockiert!
+   * Redis topic_files Cache ist die einzige Quelle der Wahrheit.
+   * 
+   * Der Cache wird aktualisiert durch:
+   * - Jeden erfolgreichen Upload
+   * - Manuelles Scannen (falls Redis neu aufgebaut werden muss)
    */
   async scanTopicFiles(topicId: number): Promise<void> {
     try {
-      const { loadTopicFiles, saveTopicFiles } = await import('./store');
+      const { loadTopicFiles } = await import('./store');
       
-      console.log(`🔍 Scanne Topic ${topicId} nach existierenden Dateien...`);
-      
-      // Lade bereits gespeicherte Dateien
+      // Lade bereits gespeicherte Dateien aus Redis
       const cachedFiles = await loadTopicFiles(topicId);
       
-      // Scanne Topic via API (nur letzten ~100 Updates)
-      const apiFiles = await this.bot.getTopicFileNames(topicId);
-      
-      // Merge beide Sets (vereinige ohne Duplikate)
-      const allFiles = new Set([...cachedFiles, ...apiFiles]);
-      
-      const newFilesCount = allFiles.size - cachedFiles.size;
-      
-      if (newFilesCount > 0) {
-        console.log(`✅ ${newFilesCount} neue Dateien in Topic ${topicId} gefunden`);
-        await saveTopicFiles(topicId, Array.from(allFiles));
-      } else if (cachedFiles.size > 0) {
-        console.log(`✓ Topic ${topicId}: ${cachedFiles.size} Dateien bereits im Cache`);
+      if (cachedFiles.size > 0) {
+        console.log(`✓ Topic ${topicId}: ${cachedFiles.size} Dateien im Redis-Cache`);
       } else {
-        console.log(`ℹ️  Topic ${topicId}: Keine Dateien gefunden`);
+        console.log(`ℹ️  Topic ${topicId}: Noch keine Dateien im Cache (wird beim Upload aufgebaut)`);
       }
     } catch (error) {
-      console.error(`❌ Fehler beim Scannen von Topic ${topicId}:`, error);
+      console.error(`❌ Fehler beim Laden von Topic ${topicId}:`, error);
     }
   }
 

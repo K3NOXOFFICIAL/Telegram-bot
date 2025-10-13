@@ -262,7 +262,19 @@ Dann beim Aufruf:
 Invoke-WebRequest -Uri "https://your-project.vercel.app/api/sync?token=your_secret_token" -Method POST
 ```
 
-## � Duplikat-Vermeidung
+## 🌐 Webhook-Modus (WICHTIG!)
+
+**Der Bot läuft im WEBHOOK-MODUS!**
+
+Dies bedeutet:
+- ✅ Telegram sendet Updates in Echtzeit an `/api/webhook`
+- ✅ Kein Polling nötig (perfekt für Vercel Serverless)
+- ⚠️ `getUpdates` API funktioniert NICHT (Error 409)
+- ✅ Redis-Cache ist die primäre Quelle für Duplikat-Vermeidung
+
+**Siehe:** [WEBHOOK_MODE.md](./WEBHOOK_MODE.md) für Details
+
+## 🔄 Duplikat-Vermeidung
 
 Der Bot verwendet ein mehrschichtiges System, um doppelte Uploads zu verhindern:
 

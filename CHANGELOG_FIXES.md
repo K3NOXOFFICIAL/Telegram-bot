@@ -159,8 +159,43 @@ Falls Redis mal gelöscht wird:
 - Wiederverwendbare Validierungs-Funktionen
 - Einfaches Debugging durch detaillierte Logs
 
+## 🔧 Kritischer Hotfix: Webhook-Modus (13. Oktober 2025, 21:30)
+
+### Problem
+```
+Error 409: Conflict: can't use getUpdates method while webhook is active
+```
+
+Nach Aktivierung des Webhooks konnte der Bot keine Topics mehr scannen, da `getUpdates` mit aktivem Webhook inkompatibel ist.
+
+### Lösung
+1. **Entfernt `getUpdates` API-Calls vollständig**
+   - `getTopicFileNames()` gibt jetzt leeres Set zurück
+   - Kein API-Scan mehr nötig
+
+2. **Vollständige Redis-Cache-Abhängigkeit**
+   - Cache wird bei jedem Upload aktualisiert
+   - Zweistufige Prüfung bleibt aktiv (file:ID + topic_files)
+   - Kein Informationsverlust
+
+3. **Webhook-Handler optimiert**
+   - Loggt nur wichtige Updates (keine Sticker/Joins)
+   - Bestätigt alle Updates korrekt
+
+### Dateien geändert
+- `lib/bot.ts` - getUpdates entfernt
+- `lib/topicManager.ts` - Scan nur aus Redis
+- `api/webhook.ts` - Reduziertes Logging
+- `WEBHOOK_MODE.md` - Neue Dokumentation
+
+### Resultat
+✅ Bot funktioniert perfekt im Webhook-Modus  
+✅ Duplikat-Vermeidung weiterhin aktiv  
+✅ Keine API-Konflikte mehr  
+✅ Redis-Cache ist primäre Quelle  
+
 ---
 
 **Status:** ✅ Alle Fixes implementiert und getestet
-**Version:** 2.0.0
-**Letzte Aktualisierung:** 13. Oktober 2025
+**Version:** 2.1.0 (Webhook-Modus)
+**Letzte Aktualisierung:** 13. Oktober 2025, 21:30 Uhr

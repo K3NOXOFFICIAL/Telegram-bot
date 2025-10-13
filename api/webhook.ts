@@ -18,7 +18,14 @@ export default async function handler(
   try {
     const update = req.body;
 
-    console.log('Telegram Update empfangen:', JSON.stringify(update, null, 2));
+    // Logge nur wichtige Updates (keine Sticker, Joins, etc.)
+    const isImportant = update.message?.text || update.message?.command || 
+                        update.message?.forum_topic_created || update.message?.photo || 
+                        update.message?.video || update.message?.document;
+    
+    if (isImportant) {
+      console.log('📨 Telegram Update empfangen:', JSON.stringify(update, null, 2));
+    }
 
     // Hier könnte man auf Telegram-Befehle reagieren, z.B.:
     // - /sync - Manuelle Synchronisierung starten
@@ -38,7 +45,7 @@ export default async function handler(
       }
     }
 
-    // Bestätige Empfang
+    // Bestätige Empfang (wichtig für Telegram!)
     return res.status(200).json({ ok: true });
 
   } catch (error: any) {

@@ -217,63 +217,23 @@ export class TelegramBot {
   }
 
   /**
-   * Liest alle Nachrichten aus einem Topic und extrahiert Dateinamen
-   * Verwendet Updates API um die letzten Nachrichten zu scannen
-   * ⚠️ LIMITATION: getUpdates zeigt nur die letzten ~100 Updates
-   * Für vollständige History müssen wir auf Redis-Cache vertrauen
+   * Liest Topic-Dateien aus Redis-Cache
+   * 
+   * ⚠️ WICHTIG: Diese Methode verwendet NICHT getUpdates, da ein Webhook aktiv ist!
+   * Telegram erlaubt nicht gleichzeitig Webhook + getUpdates.
+   * 
+   * Stattdessen verlassen wir uns auf:
+   * 1. Redis topic_files Cache (wird bei jedem Upload aktualisiert)
+   * 2. Initiales Scannen beim ersten Topic-Erstellen
+   * 
+   * Falls Redis gelöscht wurde, werden alte Dateien beim nächsten Upload
+   * durch die file:ID Prüfung erkannt und Redis wird neu aufgebaut.
    */
   async getTopicFileNames(topicId: number): Promise<Set<string>> {
-    const fileNames = new Set<string>();
-    
-    try {
-      // Verwende getUpdates um die letzten Messages zu holen
-      const response = await axios.post<TelegramResponse<any[]>>(
-        `${this.baseUrl}/getUpdates`,
-        {
-          allowed_updates: ['message'],
-          limit: 100 // Maximum
-        }
-      );
-
-      if (response.data.ok && response.data.result) {
-        for (const update of response.data.result) {
-          const message = update.message;
-          
-          // Prüfe ob Message im richtigen Topic ist
-          if (message?.message_thread_id === topicId) {
-            // Caption ist unser primärer Dateiname-Speicher
-            if (message.caption) {
-              fileNames.add(message.caption);
-            }
-            
-            // Fallback: Document filename
-            if (message.document?.file_name) {
-              fileNames.add(message.document.file_name);
-            }
-            
-            // Fallback: Video filename (falls vorhanden)
-            if (message.video?.file_name) {
-              fileNames.add(message.video.file_name);
-            }
-          }
-        }
-        
-        console.log(`📋 Topic ${topicId}: ${fileNames.size} existierende Dateien über API gefunden`);
-        
-        // Wichtiger Hinweis: Diese Methode zeigt nur die letzten ~100 Updates
-        // Daher MÜSSEN wir Redis topic_files:topicId als primäre Quelle verwenden
-        if (fileNames.size >= 90) {
-          console.warn(`⚠️  Topic ${topicId} hat viele Dateien (${fileNames.size}). Einige könnten fehlen!`);
-          console.warn(`⚠️  Redis topic_files Cache ist essentiell für Duplikat-Vermeidung!`);
-        }
-      }
-
-      return fileNames;
-      
-    } catch (error: any) {
-      console.error('❌ Fehler beim Abrufen der Topic-Nachrichten:', error.response?.data || error.message);
-      return fileNames;
-    }
+    // Leeres Set zurückgeben - Redis Cache ist die einzige Quelle
+    // Diese Methode wird von scanTopicFiles aufgerufen, das dann mit Redis merged
+    console.log(`ℹ️  Topic ${topicId}: Verwende ausschließlich Redis-Cache (Webhook-Modus)`);
+    return new Set<string>();
   }
 
   /**
