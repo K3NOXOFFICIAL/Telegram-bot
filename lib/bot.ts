@@ -138,7 +138,8 @@ export class TelegramBot {
   async sendPhotoByUrl(
     photoUrl: string,
     caption?: string,
-    messageThreadId?: number
+    messageThreadId?: number,
+    retryCount: number = 0
   ): Promise<TelegramMessage | null> {
     try {
       const response = await axios.post<TelegramResponse<TelegramMessage>>(
@@ -158,7 +159,17 @@ export class TelegramBot {
       console.error('Telegram API Fehler:', response.data);
       return null;
     } catch (error: any) {
-      console.error('Fehler beim Senden des Fotos per URL:', error.response?.data || error.message);
+      const errorData = error.response?.data;
+      
+      // Handle 429 Rate Limit
+      if (errorData?.error_code === 429 && retryCount < 3) {
+        const retryAfter = errorData.parameters?.retry_after || 5;
+        console.log(`⏳ Rate limit - warte ${retryAfter}s (Versuch ${retryCount + 1}/3)`);
+        await this.delay(retryAfter * 1000);
+        return this.sendPhotoByUrl(photoUrl, caption, messageThreadId, retryCount + 1);
+      }
+      
+      console.error('Fehler beim Senden des Fotos per URL:', errorData || error.message);
       return null;
     }
   }
@@ -169,7 +180,8 @@ export class TelegramBot {
   async sendVideoByUrl(
     videoUrl: string,
     caption?: string,
-    messageThreadId?: number
+    messageThreadId?: number,
+    retryCount: number = 0
   ): Promise<TelegramMessage | null> {
     try {
       const response = await axios.post<TelegramResponse<TelegramMessage>>(
@@ -189,7 +201,17 @@ export class TelegramBot {
       console.error('Telegram API Fehler:', response.data);
       return null;
     } catch (error: any) {
-      console.error('Fehler beim Senden des Videos per URL:', error.response?.data || error.message);
+      const errorData = error.response?.data;
+      
+      // Handle 429 Rate Limit
+      if (errorData?.error_code === 429 && retryCount < 3) {
+        const retryAfter = errorData.parameters?.retry_after || 5;
+        console.log(`⏳ Rate limit - warte ${retryAfter}s (Versuch ${retryCount + 1}/3)`);
+        await this.delay(retryAfter * 1000);
+        return this.sendVideoByUrl(videoUrl, caption, messageThreadId, retryCount + 1);
+      }
+      
+      console.error('Fehler beim Senden des Videos per URL:', errorData || error.message);
       return null;
     }
   }

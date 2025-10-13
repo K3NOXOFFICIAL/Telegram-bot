@@ -362,8 +362,8 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 3 Ordner gleichzeitig
-    const CONCURRENT = 3;
+    // PARALLEL: 2 Ordner gleichzeitig (weniger = stabiler bei Telegram Rate Limits)
+    const CONCURRENT = 2;
     
     for (let i = 0; i < folders.length; i += CONCURRENT) {
       const batch = folders.slice(i, i + CONCURRENT);
