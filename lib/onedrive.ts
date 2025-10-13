@@ -1,0 +1,192 @@
+/**
+ * OneDrive API Wrapper
+ * Verwendet Microsoft Graph API für OneDrive-Zugriff
+ */
+
+import axios from 'axios';
+import { OneDriveItem, OneDriveFolder } from './types';
+import { BotConfig } from './types';
+
+/**
+ * OneDrive Client Klasse
+ */
+export class OneDriveClient {
+  private accessToken: string | null = null;
+  private tokenExpiry: number = 0;
+
+  constructor(private config: BotConfig) {}
+
+  /**
+   * Holt ein neues Access Token von Microsoft
+   */
+  private async getAccessToken(): Promise<string> {
+    // Prüfe, ob Token noch gültig ist
+    if (this.accessToken && Date.now() < this.tokenExpiry) {
+      return this.accessToken;
+    }
+
+    const tokenUrl = `https://login.microsoftonline.com/${this.config.microsoftTenantId}/oauth2/v2.0/token`;
+
+    const params = new URLSearchParams({
+      client_id: this.config.microsoftClientId,
+      client_secret: this.config.microsoftClientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials',
+    });
+
+    try {
+      const response = await axios.post(tokenUrl, params.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      this.accessToken = response.data.access_token;
+      // Token läuft in ca. 1 Stunde ab, wir setzen Ablauf auf 55 Minuten
+      this.tokenExpiry = Date.now() + 55 * 60 * 1000;
+
+      return this.accessToken;
+    } catch (error: any) {
+      console.error('Fehler beim Abrufen des Access Tokens:', error.response?.data || error.message);
+      throw new Error('Konnte kein Access Token erhalten');
+    }
+  }
+
+  /**
+   * Macht einen authentifizierten Graph API Call
+   */
+  private async graphApiCall<T>(endpoint: string): Promise<T> {
+    const token = await this.getAccessToken();
+
+    try {
+      const response = await axios.get<T>(
+        `https://graph.microsoft.com/v1.0${endpoint}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Graph API Fehler:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Listet alle Unterordner in einem bestimmten Pfad auf
+   */
+  async listSubfolders(folderPath: string): Promise<OneDriveFolder[]> {
+    try {
+      // Kodiere den Pfad für die URL
+      const encodedPath = encodeURIComponent(folderPath);
+      const endpoint = `/me/drive/root:${encodedPath}:/children`;
+
+      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+
+      // Filtere nur Ordner
+      const folders: OneDriveFolder[] = response.value
+        .filter(item => item.folder)
+        .map(item => ({
+          id: item.id,
+          name: item.name,
+          path: `${folderPath}/${item.name}`,
+        }));
+
+      return folders;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        console.warn(`Ordner nicht gefunden: ${folderPath}`);
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Listet alle Dateien in einem Ordner auf
+   */
+  async listFilesInFolder(folderPath: string): Promise<OneDriveItem[]> {
+    try {
+      const encodedPath = encodeURIComponent(folderPath);
+      const endpoint = `/me/drive/root:${encodedPath}:/children`;
+
+      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+
+      // Filtere nur Dateien (keine Ordner)
+      return response.value.filter(item => item.file);
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        console.warn(`Ordner nicht gefunden: ${folderPath}`);
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Prüft, ob eine Datei ein Bild oder Video ist
+   */
+  isMediaFile(item: OneDriveItem): boolean {
+    if (!item.file?.mimeType) return false;
+
+    const mediaTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'video/mp4',
+      'video/mpeg',
+      'video/quicktime',
+      'video/x-msvideo',
+      'video/webm',
+    ];
+
+    return mediaTypes.some(type => item.file!.mimeType.startsWith(type.split('/')[0]));
+  }
+
+  /**
+   * Lädt eine Datei herunter
+   */
+  async downloadFile(fileId: string): Promise<Buffer> {
+    try {
+      const token = await this.getAccessToken();
+      const endpoint = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`;
+
+      const response = await axios.get(endpoint, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        responseType: 'arraybuffer',
+      });
+
+      return Buffer.from(response.data);
+    } catch (error) {
+      console.error(`Fehler beim Herunterladen der Datei ${fileId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Holt die Download-URL für eine Datei
+   */
+  async getDownloadUrl(fileId: string): Promise<string> {
+    try {
+      const endpoint = `/me/drive/items/${fileId}`;
+      const response = await this.graphApiCall<OneDriveItem>(endpoint);
+
+      if (response['@microsoft.graph.downloadUrl']) {
+        return response['@microsoft.graph.downloadUrl'];
+      }
+
+      throw new Error('Keine Download-URL verfügbar');
+    } catch (error) {
+      console.error(`Fehler beim Abrufen der Download-URL für ${fileId}:`, error);
+      throw error;
+    }
+  }
+}

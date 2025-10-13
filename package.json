@@ -1,0 +1,37 @@
+{
+  "name": "telegram-onedrive-bot",
+  "version": "1.0.0",
+  "description": "Telegram Bot für OneDrive zu Telegram Topics Synchronisation",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "tsc",
+    "deploy": "vercel --prod",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test-local": "tsx test-local.ts",
+    "sync": "tsx test-local.ts"
+  },
+  "keywords": [
+    "telegram",
+    "onedrive",
+    "bot",
+    "vercel"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@vercel/kv": "^1.0.1",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/node-fetch": "^2.6.9",
+    "@vercel/node": "^3.0.11",
+    "tsx": "^4.20.6",
+    "typescript": "^5.3.3"
+  }
+}

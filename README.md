@@ -1,0 +1,317 @@
+# 📸 OneDrive zu Telegram Topics Bot
+
+Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) aus OneDrive-Ordnern in passende Telegram-Topics postet. Vollständig auf Vercel deploybar.
+
+## 🎯 Funktionen
+
+- ✅ Überwacht einen OneDrive-Ordner auf neue Unterordner
+- ✅ Erstellt automatisch Telegram Topics basierend auf Ordnernamen
+- ✅ Postet alle Bilder und Videos in die passenden Topics
+- ✅ Vermeidet Duplikate durch persistente Speicherung
+- ✅ Rate-Limiting für sanfte Verarbeitung großer Mediensammlungen
+- ✅ Vercel-kompatibel mit Serverless Functions
+- ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
+
+## 📋 Voraussetzungen
+
+### 1. Telegram Bot erstellen
+
+**📖 Siehe ausführliche Anleitung:** [TELEGRAM_SETUP.md](./TELEGRAM_SETUP.md)
+
+**Kurzversion:**
+1. Öffne [@BotFather](https://t.me/botfather) in Telegram
+2. Sende `/newbot` und folge den Anweisungen
+3. Speichere den Bot Token
+4. Erstelle eine Telegram-Gruppe mit Forum-Topics aktiviert
+5. Füge deinen Bot zur Gruppe hinzu und mache ihn zum Admin
+6. Hole die Chat-ID (z.B. mit [@getidsbot](https://t.me/getidsbot))
+
+### 2. Microsoft Azure App registrieren
+
+**📖 Siehe ausführliche Anleitung:** [AZURE_SETUP.md](./AZURE_SETUP.md)
+
+**Kurzversion:**
+1. Gehe zu [Azure Portal](https://portal.azure.com)
+2. Erstelle eine neue App Registration
+3. Notiere Client ID, Tenant ID und erstelle ein Client Secret
+4. Füge `Files.Read.All` Permission hinzu
+5. Klicke "Grant admin consent"
+
+### 3. Vercel Account
+
+1. Erstelle einen Account auf [vercel.com](https://vercel.com)
+2. Installiere die Vercel CLI: `npm i -g vercel`
+
+## 🚀 Installation
+
+### 1. Projekt klonen und Dependencies installieren
+
+```powershell
+cd s:\Coding\Telegram-bot
+npm install
+```
+
+### 2. Umgebungsvariablen konfigurieren
+
+Kopiere `.env.example` zu `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Bearbeite `.env` und fülle alle Werte aus:
+
+```env
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+
+MICROSOFT_CLIENT_ID=your_client_id_here
+MICROSOFT_CLIENT_SECRET=your_client_secret_here
+MICROSOFT_TENANT_ID=your_tenant_id_here
+
+ONEDRIVE_FOLDER_PATH=/path/to/your/folder
+RATE_LIMIT_DELAY=2000
+```
+
+## 💻 Lokale Entwicklung
+
+```powershell
+# Vercel Dev-Server starten
+npm run dev
+```
+
+Öffne: `http://localhost:3000`
+
+### Endpoints testen
+
+```powershell
+# Status abfragen
+Invoke-WebRequest -Uri "http://localhost:3000/api/status" | Select-Object -ExpandProperty Content
+
+# Synchronisierung starten
+Invoke-WebRequest -Uri "http://localhost:3000/api/sync" -Method POST | Select-Object -ExpandProperty Content
+```
+
+## 🌐 Vercel Deployment
+
+### 1. Mit Vercel verbinden
+
+```powershell
+vercel login
+vercel
+```
+
+Folge den Anweisungen und wähle:
+- Set up and deploy: `Yes`
+- Which scope: Dein Account
+- Link to existing project: `No`
+- Project name: `telegram-onedrive-bot`
+- Directory: `./`
+
+### 2. Umgebungsvariablen setzen
+
+```powershell
+vercel env add TELEGRAM_BOT_TOKEN
+vercel env add TELEGRAM_CHAT_ID
+vercel env add MICROSOFT_CLIENT_ID
+vercel env add MICROSOFT_CLIENT_SECRET
+vercel env add MICROSOFT_TENANT_ID
+vercel env add ONEDRIVE_FOLDER_PATH
+vercel env add RATE_LIMIT_DELAY
+```
+
+Oder im Vercel Dashboard unter "Settings" → "Environment Variables"
+
+### 3. Deployen
+
+```powershell
+npm run deploy
+```
+
+Deine App ist jetzt live unter: `https://your-project.vercel.app`
+
+## 📊 API Endpoints
+
+### GET /api/status
+
+Zeigt den aktuellen Bot-Status:
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/status" | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "healthy": true,
+  "timestamp": "2025-10-13T12:00:00.000Z",
+  "config": {
+    "valid": true,
+    "errors": []
+  },
+  "state": {
+    "totalPostedFiles": 150,
+    "totalTopicMappings": 5,
+    "lastSync": "2025-10-13T11:55:00.000Z"
+  },
+  "topics": [
+    {
+      "folderName": "Urlaub 2025",
+      "topicName": "Urlaub 2025",
+      "topicId": 12345
+    }
+  ]
+}
+```
+
+### POST /api/sync
+
+Startet eine manuelle Synchronisierung:
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/sync" -Method POST | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "success": true,
+  "stats": {
+    "foldersScanned": 3,
+    "filesFound": 45,
+    "filesPosted": 12,
+    "errors": 0,
+    "duration": 15230
+  },
+  "timestamp": "2025-10-13T12:05:00.000Z"
+}
+```
+
+## ⏱️ Automatische Synchronisierung
+
+Die `vercel.json` ist bereits konfiguriert für automatische Synchronisierung alle 5 Minuten:
+
+```json
+{
+  "crons": [
+    {
+      "path": "/api/sync",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
+```
+
+**Cron-Syntax:**
+- `*/5 * * * *` - Alle 5 Minuten
+- `0 */1 * * *` - Jede Stunde
+- `0 9 * * *` - Täglich um 9:00 Uhr
+
+Hinweis: Cron-Jobs benötigen einen Vercel Pro Account!
+
+## 🔒 Sicherheit
+
+- Alle sensiblen Daten werden in Umgebungsvariablen gespeichert
+- Niemals Credentials im Code oder in Git committen
+- Optional: Authentifizierung für `/api/sync` mit `SYNC_AUTH_TOKEN`
+
+```env
+SYNC_AUTH_TOKEN=your_secret_token
+```
+
+Dann beim Aufruf:
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/sync?token=your_secret_token" -Method POST
+```
+
+## 🗄️ Datenspeicherung
+
+Der Bot nutzt standardmäßig einen In-Memory Store. Für Production wird empfohlen:
+
+### Option 1: Vercel KV (empfohlen)
+
+1. Aktiviere Vercel KV in deinem Projekt-Dashboard
+2. Die Umgebungsvariablen werden automatisch gesetzt
+3. Der Bot erkennt automatisch Vercel KV und nutzt es
+
+### Option 2: Externe Datenbank
+
+Du kannst den Store in `lib/store.ts` anpassen, um eine externe Datenbank zu nutzen:
+- PostgreSQL (z.B. Vercel Postgres)
+- MongoDB
+- Redis
+
+## 📝 Projektstruktur
+
+```
+telegram-onedrive-bot/
+├── api/
+│   ├── sync.ts          # Hauptsynchronisierung
+│   ├── status.ts        # Status-Endpoint
+│   └── webhook.ts       # Telegram Webhook (optional)
+├── lib/
+│   ├── bot.ts           # Telegram Bot API
+│   ├── config.ts        # Konfigurationsverwaltung
+│   ├── onedrive.ts      # OneDrive/Graph API
+│   ├── store.ts         # Datenspeicherung
+│   ├── sync.ts          # Synchronisierungslogik
+│   ├── topicManager.ts  # Topic-Verwaltung
+│   └── types.ts         # TypeScript-Typen
+├── package.json
+├── tsconfig.json
+├── vercel.json
+├── .env.example
+└── README.md
+```
+
+## 🐛 Troubleshooting
+
+### Bot postet nicht in Topics
+
+1. Stelle sicher, dass die Telegram-Gruppe Forum-Topics aktiviert hat
+2. Der Bot muss Admin-Rechte haben
+3. Prüfe die Logs: `vercel logs`
+
+### Microsoft Graph API Fehler
+
+1. Überprüfe, ob alle Permissions gewährt wurden
+2. "Grant admin consent" im Azure Portal klicken
+3. Client Secret könnte abgelaufen sein (max. 24 Monate)
+
+### Rate Limiting
+
+Telegram erlaubt ca. 20-30 Nachrichten pro Sekunde pro Gruppe. Bei großen Mengen:
+
+```env
+RATE_LIMIT_DELAY=3000  # 3 Sekunden zwischen Posts
+```
+
+### Vercel Timeout
+
+Serverless Functions haben ein Timeout (Hobby: 10s, Pro: 60s). Bei vielen Dateien:
+
+1. Reduziere die Anzahl der Dateien pro Sync
+2. Nutze Vercel Pro für längere Timeouts
+3. Implementiere Background-Processing
+
+## 📚 Weitere Ressourcen
+
+- [Telegram Bot API Dokumentation](https://core.telegram.org/bots/api)
+- [Microsoft Graph API Dokumentation](https://learn.microsoft.com/en-us/graph/api/overview)
+- [Vercel Dokumentation](https://vercel.com/docs)
+
+## 📄 Lizenz
+
+MIT License
+
+## 🤝 Unterstützung
+
+Bei Problemen oder Fragen:
+1. Prüfe die Logs: `vercel logs`
+2. Teste lokal: `npm run dev`
+3. Überprüfe die Umgebungsvariablen
+
+---
+
+Erstellt mit ❤️ für automatische OneDrive zu Telegram Synchronisierung
