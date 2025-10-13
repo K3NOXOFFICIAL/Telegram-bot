@@ -6,7 +6,7 @@
 import { OneDriveClient } from './onedrive';
 import { TelegramBot } from './bot';
 import { TopicManager } from './topicManager';
-import { isFilePosted, markFileAsPosted, cleanupOldFiles, acquireSyncLock, releaseSyncLock } from './store';
+import { isFilePosted, markFileAsPosted, acquireSyncLock, releaseSyncLock } from './store';
 import { BotConfig, OneDriveItem } from './types';
 
 /**
@@ -48,12 +48,6 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
     const onedrive = new OneDriveClient(config);
     const bot = new TelegramBot(config);
     const topicManager = new TopicManager(bot);
-
-    // Bereinige alte Einträge (älter als 30 Tage)
-    const cleanedFiles = await cleanupOldFiles(30);
-    if (cleanedFiles > 0) {
-      console.log(`🧹 ${cleanedFiles} alte Dateieinträge bereinigt`);
-    }
 
     // Hole alle Unterordner aus dem konfigurierten OneDrive-Pfad
     const folders = await onedrive.listSubfolders(config.onedriveFolderPath);
@@ -398,11 +392,6 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     const onedrive = new OneDriveClient(config);
     const bot = new TelegramBot(config);
     const topicManager = new TopicManager(bot);
-
-    const cleanedFiles = await cleanupOldFiles(30);
-    if (cleanedFiles > 0) {
-      console.log(`🧹 ${cleanedFiles} alte Einträge bereinigt`);
-    }
 
     const folders = await onedrive.listSubfolders(config.onedriveFolderPath);
     console.log(`📁 ${folders.length} Ordner gefunden`);

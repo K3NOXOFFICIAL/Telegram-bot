@@ -338,7 +338,12 @@ export async function isFileInTopic(topicId: number, fileName: string): Promise<
 
 /**
  * Löscht alte gepostete Dateien (älter als X Tage)
- * Verhindert, dass der Store zu groß wird
+ * ⚠️ WARNUNG: Diese Funktion sollte NICHT verwendet werden!
+ * Wenn alte Datei-IDs gelöscht werden, würde der Bot diese Dateien beim nächsten
+ * Sync erneut hochladen (Duplikate!). Das Topic-Scan-System verhindert zwar
+ * Duplikate, aber es ist besser, alle Datei-IDs dauerhaft zu speichern.
+ * 
+ * Diese Funktion bleibt nur für manuelle Cleanup-Operationen verfügbar.
  */
 export async function cleanupOldFiles(daysToKeep: number = 30): Promise<number> {
   const state = await loadState();

@@ -1,3 +1,9 @@
 {
-  "crons": []
+  "crons": [],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/index"
+    }
+  ]
 }
