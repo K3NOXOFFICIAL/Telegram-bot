@@ -75,12 +75,14 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
 
         // Hole alle Dateien aus dem Ordner
         const files = await onedrive.listFilesInFolder(folder.path);
+        console.log(`   📄 ${files.length} Dateien insgesamt gefunden`);
+        
         const mediaFiles = files.filter(file => onedrive.isMediaFile(file));
-
-        console.log(`📄 ${mediaFiles.length} Mediendateien gefunden`);
+        console.log(`   🎬 ${mediaFiles.length} Mediendateien (Bilder/Videos) gefunden`);
         stats.filesFound += mediaFiles.length;
 
         if (mediaFiles.length === 0) {
+          console.log(`   ⚠️  Keine Medien zum Posten`);
           continue;
         }
 
@@ -98,19 +100,34 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               continue;
             }
 
-            console.log(`📤 Poste: ${file.name}`);
+            console.log(`📤 Poste: ${file.name} (${file.file?.mimeType})`);
 
             // Bestimme Dateityp
-            const isVideo = file.file?.mimeType.startsWith('video/');
+            const mimeType = file.file?.mimeType || '';
+            const isVideo = mimeType.startsWith('video/');
+            const isImage = mimeType.startsWith('image/');
+
+            if (!isVideo && !isImage) {
+              console.log(`   ⏭️  Überspringe nicht-Medien-Datei`);
+              continue;
+            }
 
             // Hole Download-URL
             const downloadUrl = await onedrive.getDownloadUrl(file.id);
 
+            if (!downloadUrl) {
+              console.error(`   ❌ Keine Download-URL für ${file.name}`);
+              stats.errors++;
+              continue;
+            }
+
             // Poste Datei
             let message;
             if (isVideo) {
+              console.log(`   🎥 Sende Video...`);
               message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
             } else {
+              console.log(`   🖼️  Sende Bild...`);
               message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
             }
 
@@ -118,9 +135,9 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               // Markiere als gepostet
               await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
               stats.filesPosted++;
-              console.log(`✅ Erfolgreich gepostet: ${file.name}`);
+              console.log(`   ✅ Erfolgreich gepostet: ${file.name}`);
             } else {
-              console.error(`❌ Fehler beim Posten von ${file.name}`);
+              console.error(`   ❌ Fehler beim Posten von ${file.name}`);
               stats.errors++;
             }
 
