@@ -276,7 +276,9 @@ async function processFolderParallel(
   };
 
   try {
-    console.log(`\n📂 [${folder.name}] Start`);
+    const folderStartTime = Date.now();
+    const timestamp = new Date().toLocaleTimeString('de-DE');
+    console.log(`\n📂 [${timestamp}] [${folder.name}] Start`);
 
     const topicId = await topicManager.getOrCreateTopic(folder.name);
     if (!topicId) {
@@ -386,7 +388,9 @@ async function processFolderParallel(
       }
     }
 
-    console.log(`✅ [${folder.name}] Fertig (${localStats.filesPosted} gepostet)`);
+    const folderDuration = ((Date.now() - folderStartTime) / 1000).toFixed(1);
+    const timestamp2 = new Date().toLocaleTimeString('de-DE');
+    console.log(`✅ [${timestamp2}] [${folder.name}] Fertig (${localStats.filesPosted} gepostet in ${folderDuration}s)`);
     return localStats;
 
   } catch (folderError) {
@@ -444,28 +448,38 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 2 Ordner gleichzeitig
-    const CONCURRENT = 2;
+    // PARALLEL: 3 Ordner gleichzeitig (erhöht von 2)
+    const CONCURRENT = 3;
     
     for (let i = 0; i < folders.length; i += CONCURRENT) {
       const batch = folders.slice(i, i + CONCURRENT);
-      console.log(`\n📦 Batch ${Math.floor(i / CONCURRENT) + 1}/${Math.ceil(folders.length / CONCURRENT)}: ${batch.map(f => f.name).join(', ')}`);
+      const batchNum = Math.floor(i / CONCURRENT) + 1;
+      const totalBatches = Math.ceil(folders.length / CONCURRENT);
       
+      console.log(`\n📦 Batch ${batchNum}/${totalBatches}: Starte ${batch.length} Ordner PARALLEL`);
+      console.log(`   📂 ${batch.map(f => f.name).join(' | ')}`);
+      
+      const batchStartTime = Date.now();
       const batchResults = await Promise.all(
         batch.map(folder => 
           processFolderParallel(folder, onedrive, bot, topicManager, config)
         )
       );
+      const batchDuration = ((Date.now() - batchStartTime) / 1000).toFixed(1);
 
       // Aggregiere Statistiken
+      let batchFilesPosted = 0;
       batchResults.forEach(result => {
         stats.foldersScanned++;
         stats.filesFound += result.filesFound;
         stats.filesPosted += result.filesPosted;
         stats.errors += result.errors;
+        batchFilesPosted += result.filesPosted;
       });
 
-      console.log(`   📊 Batch-Fortschritt: ${stats.filesPosted} von ${stats.filesFound} Dateien gepostet`);
+      console.log(`✅ Batch ${batchNum} abgeschlossen in ${batchDuration}s`);
+      console.log(`   📊 Batch: ${batchFilesPosted} Dateien gepostet`);
+      console.log(`   📊 Gesamt: ${stats.filesPosted} von ${stats.filesFound} Dateien (${stats.errors} Fehler)`);
       
       // Speichere Stats nach jedem Batch
       await saveSyncStats({
