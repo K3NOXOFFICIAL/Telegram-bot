@@ -234,26 +234,6 @@
         function updateStats(data) {
             const statsDiv = document.getElementById('stats');
             
-            if (data.stats) {
-                statsDiv.style.display = 'grid';
-                statsDiv.innerHTML = `
-                    <div class="stat-card">
-                        <div class="stat-label">Folders Scanned</div>
-                        <div class="stat-value">${data.stats.foldersScanned || 0}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Files Found</div>
-                        <div class="stat-value">${data.stats.filesFound || 0}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Files Posted</div>
-                        <div class="stat-value">${data.stats.filesPosted || 0}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Errors</div>
-                        <div class="stat-value">${data.stats.errors || 0}</div>
-                    </div>
-                `;
             if (data.state || data.currentSync) {
                 statsDiv.style.display = 'grid';
                 
