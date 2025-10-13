@@ -177,8 +177,8 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               stats.errors++;
             }
 
-            // Rate Limiting: Warte zwischen Posts
-            await bot.delay(config.rateLimitDelay);
+            // Rate Limiting: 3s zwischen Posts (20 msg/min Limit)
+            await bot.delay(3000);
 
           } catch (fileError) {
             console.error(`❌ Fehler bei Datei ${file.name}:`, fileError);
@@ -380,7 +380,9 @@ async function processFolderParallel(
           localStats.errors++;
         }
 
-        await bot.delay(config.rateLimitDelay);
+        // Telegram Limit: 20 msg/min pro Chat = 3s zwischen msgs
+        // Bei 6 parallelen Topics = 30 msg/sec insgesamt (Max!)
+        await bot.delay(3000);
 
       } catch (fileError) {
         console.error(`   ❌ [${folder.name}] ${file.name}:`, fileError);
@@ -455,8 +457,10 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 3 Ordner gleichzeitig (erhöht von 2)
-    const CONCURRENT = 3;
+    // PARALLEL: 6 Ordner gleichzeitig (optimiert für Telegram Limits)
+    // Telegram erlaubt: 20 msg/min pro Topic, 30 msg/sec broadcast insgesamt
+    // 6 parallel = max. Nutzung der 30 msg/sec Gesamtkapazität
+    const CONCURRENT = 6;
     const startIndex = progress?.currentFolderIndex || 0;
     let needsContinuation = false;
     
