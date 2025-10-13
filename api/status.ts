@@ -6,7 +6,7 @@
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateConfig } from '../lib/config';
-import { loadState, getAllTopicMappings, loadSyncStats } from '../lib/store';
+import { loadState, getAllTopicMappings, loadSyncStats, getSyncLockStatus } from '../lib/store';
 
 export default async function handler(
   req: VercelRequest,
@@ -30,6 +30,7 @@ export default async function handler(
     const state = await loadState();
     const mappings = await getAllTopicMappings();
     const syncStats = await loadSyncStats();
+    const lockStatus = await getSyncLockStatus();
 
     // Erstelle Status-Response
     const status = {
@@ -46,6 +47,12 @@ export default async function handler(
         totalTopicMappings: state.topicMappings.length,
         lastSync: state.lastSync,
       },
+      syncLock: lockStatus.locked ? {
+        locked: true,
+        ageSeconds: Math.round(lockStatus.age! / 1000),
+        ageMinutes: Math.round(lockStatus.age! / 60000),
+        timestamp: new Date(lockStatus.timestamp!).toISOString(),
+      } : { locked: false },
       currentSync: syncStats || null,
       topics: mappings.map(m => ({
         folderName: m.folderName,

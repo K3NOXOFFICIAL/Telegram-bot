@@ -530,12 +530,29 @@ export async function acquireSyncLock(): Promise<boolean> {
 
   try {
     const lockKey = 'sync_lock';
-    const timestamp = Date.now().toString();
+    const now = Date.now();
+    const lockTimeout = 5 * 60 * 1000; // 5 Minuten (reduziert von 30)
+    
+    // Prüfe ob ein Lock existiert und ob er abgelaufen ist
+    const existingLock = await kvStore.get(lockKey);
+    if (existingLock) {
+      const lockTimestamp = parseInt(existingLock, 10);
+      const lockAge = now - lockTimestamp;
+      
+      if (lockAge > lockTimeout) {
+        // Lock ist abgelaufen, lösche ihn
+        console.log(`⏰ Lock ist abgelaufen (${Math.round(lockAge / 1000)}s alt) - lösche und setze neu`);
+        await kvStore.del(lockKey);
+      } else {
+        console.log(`⏸️  Sync läuft bereits (${Math.round(lockAge / 1000)}s aktiv) - überspringe`);
+        return false;
+      }
+    }
     
     // Versuche Lock zu setzen mit NX (only if not exists) und PX (expire in milliseconds)
-    const result = await kvStore.set(lockKey, timestamp, {
+    const result = await kvStore.set(lockKey, now.toString(), {
       nx: true,  // Nur setzen wenn Key nicht existiert
-      px: 1800000  // Expire nach 30 Minuten (in milliseconds)
+      px: lockTimeout  // Expire nach 5 Minuten
     });
     
     if (result) {
@@ -546,7 +563,7 @@ export async function acquireSyncLock(): Promise<boolean> {
     console.log('⏸️  Sync läuft bereits - überspringe');
     return false;
   } catch (error) {
-    console.error('Fehler beim Lock-Handling:', error);
+    console.error('❌ Fehler beim Lock-Handling:', error);
     return true; // Im Fehlerfall trotzdem ausführen
   }
 }
@@ -566,6 +583,42 @@ export async function releaseSyncLock(): Promise<void> {
     await kvStore.del(lockKey);
     console.log('🔓 Sync-Lock freigegeben');
   } catch (error) {
-    console.error('Fehler beim Lock-Release:', error);
+    console.error('❌ Fehler beim Lock-Release:', error);
+  }
+}
+
+/**
+ * Holt den aktuellen Lock-Status (für Debugging)
+ */
+export async function getSyncLockStatus(): Promise<{
+  locked: boolean;
+  age?: number;
+  timestamp?: number;
+}> {
+  await initializeStore();
+  
+  if (!kvStore) {
+    return { locked: false };
+  }
+
+  try {
+    const lockKey = 'sync_lock';
+    const lockValue = await kvStore.get(lockKey);
+    
+    if (!lockValue) {
+      return { locked: false };
+    }
+    
+    const timestamp = parseInt(lockValue, 10);
+    const age = Date.now() - timestamp;
+    
+    return {
+      locked: true,
+      age,
+      timestamp
+    };
+  } catch (error) {
+    console.error('❌ Fehler beim Abrufen des Lock-Status:', error);
+    return { locked: false };
   }
 }
