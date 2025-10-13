@@ -6,7 +6,7 @@
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { loadConfig, validateConfig } from '../lib/config';
-import { syncOneDriveToTelegram } from '../lib/sync';
+import { syncOneDriveToTelegramParallel } from '../lib/sync';
 
 export default async function handler(
   req: VercelRequest,
@@ -51,8 +51,8 @@ export default async function handler(
       });
     }
 
-    // Starte Synchronisierung
-    const stats = await syncOneDriveToTelegram(config);
+    // Starte PARALLELE Synchronisierung
+    const stats = await syncOneDriveToTelegramParallel(config);
 
     // Erfolgreiche Antwort
     return res.status(200).json({

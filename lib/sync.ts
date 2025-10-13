@@ -230,3 +230,170 @@ export async function processFile(
     return false;
   }
 }
+
+/**
+ * Verarbeitet einen Ordner (Helper für parallele Verarbeitung)
+ */
+async function processFolderParallel(
+  folder: { id: string; name: string; path: string },
+  onedrive: OneDriveClient,
+  bot: TelegramBot,
+  topicManager: TopicManager,
+  config: BotConfig,
+  stats: SyncStats
+): Promise<void> {
+  stats.foldersScanned++;
+
+  try {
+    console.log(`\n📂 [${folder.name}] Start`);
+
+    const topicId = await topicManager.getOrCreateTopic(folder.name);
+    if (!topicId) {
+      console.error(`❌ [${folder.name}] Topic-Erstellung fehlgeschlagen`);
+      stats.errors++;
+      return;
+    }
+
+    const files = await onedrive.listFilesRecursive(folder.path);
+    const mediaFiles = files.filter(file => onedrive.isMediaFile(file));
+    
+    console.log(`   [${folder.name}] ${mediaFiles.length} Medien gefunden`);
+    stats.filesFound += mediaFiles.length;
+
+    if (mediaFiles.length === 0) {
+      return;
+    }
+
+    mediaFiles.sort((a, b) => {
+      return new Date(a.createdDateTime).getTime() - new Date(b.createdDateTime).getTime();
+    });
+
+    for (const file of mediaFiles) {
+      try {
+        if (await isFilePosted(file.id)) {
+          continue;
+        }
+
+        const mimeType = file.file?.mimeType || '';
+        const isVideo = mimeType.startsWith('video/');
+        const isImage = mimeType.startsWith('image/');
+
+        if (!isVideo && !isImage) {
+          continue;
+        }
+
+        const downloadUrl = await onedrive.getDownloadUrl(file.id);
+        if (!downloadUrl) {
+          stats.errors++;
+          continue;
+        }
+
+        let message;
+        if (isVideo) {
+          message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
+        } else {
+          message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
+        }
+
+        if (message) {
+          await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
+          stats.filesPosted++;
+          console.log(`   ✅ [${folder.name}] ${file.name}`);
+        } else {
+          stats.errors++;
+        }
+
+        await bot.delay(config.rateLimitDelay);
+
+      } catch (fileError) {
+        console.error(`   ❌ [${folder.name}] ${file.name}:`, fileError);
+        stats.errors++;
+      }
+    }
+
+    console.log(`✅ [${folder.name}] Fertig (${stats.filesPosted} gepostet)`);
+
+  } catch (folderError) {
+    console.error(`❌ [${folder.name}] Ordner-Fehler:`, folderError);
+    stats.errors++;
+  }
+}
+
+/**
+ * Parallele Synchronisierungsfunktion
+ * Verarbeitet mehrere Ordner gleichzeitig
+ */
+export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise<SyncStats> {
+  const startTime = Date.now();
+  const stats: SyncStats = {
+    foldersScanned: 0,
+    filesFound: 0,
+    filesPosted: 0,
+    errors: 0,
+    duration: 0,
+  };
+
+  try {
+    console.log('🔄 Starte PARALLELE Synchronisierung...');
+    
+    const lockAcquired = await acquireSyncLock();
+    if (!lockAcquired) {
+      console.log('⏸️  Synchronisierung läuft bereits - überspringe');
+      stats.duration = Date.now() - startTime;
+      return stats;
+    }
+
+    const onedrive = new OneDriveClient(config);
+    const bot = new TelegramBot(config);
+    const topicManager = new TopicManager(bot);
+
+    const cleanedFiles = await cleanupOldFiles(30);
+    if (cleanedFiles > 0) {
+      console.log(`🧹 ${cleanedFiles} alte Einträge bereinigt`);
+    }
+
+    const folders = await onedrive.listSubfolders(config.onedriveFolderPath);
+    console.log(`📁 ${folders.length} Ordner gefunden`);
+
+    if (folders.length === 0) {
+      console.log('⚠️ Keine Ordner gefunden');
+      stats.duration = Date.now() - startTime;
+      await releaseSyncLock();
+      return stats;
+    }
+
+    // PARALLEL: 3 Ordner gleichzeitig
+    const CONCURRENT = 3;
+    
+    for (let i = 0; i < folders.length; i += CONCURRENT) {
+      const batch = folders.slice(i, i + CONCURRENT);
+      console.log(`\n📦 Batch ${Math.floor(i / CONCURRENT) + 1}/${Math.ceil(folders.length / CONCURRENT)}: ${batch.map(f => f.name).join(', ')}`);
+      
+      await Promise.all(
+        batch.map(folder => 
+          processFolderParallel(folder, onedrive, bot, topicManager, config, stats)
+        )
+      );
+    }
+
+    stats.duration = Date.now() - startTime;
+
+    console.log('\n✨ Synchronisierung abgeschlossen');
+    console.log(`📊 Statistiken:`);
+    console.log(`   - Ordner: ${stats.foldersScanned}`);
+    console.log(`   - Dateien gefunden: ${stats.filesFound}`);
+    console.log(`   - Dateien gepostet: ${stats.filesPosted}`);
+    console.log(`   - Fehler: ${stats.errors}`);
+    console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
+
+    await releaseSyncLock();
+    return stats;
+
+  } catch (error) {
+    console.error('❌ Kritischer Fehler:', error);
+    stats.errors++;
+    stats.duration = Date.now() - startTime;
+    await releaseSyncLock();
+    throw error;
+  }
+}
