@@ -6,7 +6,7 @@
 import { OneDriveClient } from './onedrive';
 import { TelegramBot } from './bot';
 import { TopicManager } from './topicManager';
-import { isFilePosted, markFileAsPosted, cleanupOldFiles } from './store';
+import { isFilePosted, markFileAsPosted, cleanupOldFiles, acquireSyncLock, releaseSyncLock } from './store';
 import { BotConfig, OneDriveItem } from './types';
 
 /**
@@ -35,6 +35,14 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
 
   try {
     console.log('🔄 Starte Synchronisierung...');
+    
+    // Versuche Lock zu erhalten (verhindert mehrere gleichzeitige Syncs)
+    const lockAcquired = await acquireSyncLock();
+    if (!lockAcquired) {
+      console.log('⏸️  Synchronisierung läuft bereits - überspringe');
+      stats.duration = Date.now() - startTime;
+      return stats;
+    }
 
     // Initialisiere Clients
     const onedrive = new OneDriveClient(config);
@@ -166,12 +174,19 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
     console.log(`   - Fehler: ${stats.errors}`);
     console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
 
+    // Lock freigeben
+    await releaseSyncLock();
+
     return stats;
 
   } catch (error) {
     console.error('❌ Kritischer Fehler bei der Synchronisierung:', error);
     stats.errors++;
     stats.duration = Date.now() - startTime;
+    
+    // Lock auch im Fehlerfall freigeben
+    await releaseSyncLock();
+    
     throw error;
   }
 }

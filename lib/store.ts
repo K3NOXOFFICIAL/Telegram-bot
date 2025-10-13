@@ -225,3 +225,79 @@ export async function resetStore(): Promise<void> {
 
   await saveState(emptyState);
 }
+
+/**
+ * Versucht einen Sync-Lock zu erhalten
+ * Verhindert, dass mehrere Deployments gleichzeitig synchronisieren
+ */
+export async function acquireSyncLock(): Promise<boolean> {
+  await initializeStore();
+  
+  if (!kvStore) {
+    // Ohne Redis/KV können wir keinen Lock setzen
+    console.log('⚠️  Kein KV Store - kann Lock nicht setzen');
+    return true;
+  }
+
+  try {
+    const lockKey = 'sync_lock';
+    const existingLock = await kvStore.get(lockKey);
+    
+    if (existingLock) {
+      const lockTime = new Date(existingLock.timestamp);
+      const now = new Date();
+      const diffMinutes = (now.getTime() - lockTime.getTime()) / 1000 / 60;
+      
+      // Lock ist älter als 30 Minuten? Wahrscheinlich crashed - überschreiben
+      if (diffMinutes > 30) {
+        console.log('🔓 Alter Lock gefunden (>30min) - überschreibe');
+      } else {
+        console.log(`🔒 Sync läuft bereits (seit ${Math.round(diffMinutes)}min) - überspringe`);
+        return false;
+      }
+    }
+    
+    // Setze neuen Lock
+    await kvStore.set(lockKey, {
+      timestamp: new Date().toISOString(),
+      deployment: process.env.VERCEL_DEPLOYMENT_ID || 'local'
+    });
+    
+    console.log('🔒 Sync-Lock erhalten');
+    return true;
+  } catch (error) {
+    console.error('Fehler beim Lock-Handling:', error);
+    return true; // Im Fehlerfall trotzdem ausführen
+  }
+}
+
+/**
+ * Gibt den Sync-Lock frei
+ */
+export async function releaseSyncLock(): Promise<void> {
+  await initializeStore();
+  
+  if (!kvStore) {
+    return;
+  }
+
+  try {
+    const lockKey = 'sync_lock';
+    
+    // Erstelle einen Redis-Client mit DEL-Unterstützung
+    if (process.env.REDIS_URL) {
+      const { createClient } = require('redis');
+      const client = createClient({ url: process.env.REDIS_URL });
+      await client.connect();
+      await client.del(lockKey);
+      await client.disconnect();
+    } else {
+      // Vercel KV - setze auf null mit kurzer TTL
+      await kvStore.set(lockKey, null);
+    }
+    
+    console.log('🔓 Sync-Lock freigegeben');
+  } catch (error) {
+    console.error('Fehler beim Lock-Release:', error);
+  }
+}
