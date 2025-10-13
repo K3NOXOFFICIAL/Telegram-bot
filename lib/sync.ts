@@ -239,10 +239,13 @@ async function processFolderParallel(
   onedrive: OneDriveClient,
   bot: TelegramBot,
   topicManager: TopicManager,
-  config: BotConfig,
-  stats: SyncStats
-): Promise<void> {
-  stats.foldersScanned++;
+  config: BotConfig
+): Promise<{ filesFound: number; filesPosted: number; errors: number }> {
+  const localStats = {
+    filesFound: 0,
+    filesPosted: 0,
+    errors: 0
+  };
 
   try {
     console.log(`\n📂 [${folder.name}] Start`);
@@ -250,18 +253,18 @@ async function processFolderParallel(
     const topicId = await topicManager.getOrCreateTopic(folder.name);
     if (!topicId) {
       console.error(`❌ [${folder.name}] Topic-Erstellung fehlgeschlagen`);
-      stats.errors++;
-      return;
+      localStats.errors++;
+      return localStats;
     }
 
     const files = await onedrive.listFilesRecursive(folder.path);
     const mediaFiles = files.filter(file => onedrive.isMediaFile(file));
     
     console.log(`   [${folder.name}] ${mediaFiles.length} Medien gefunden`);
-    stats.filesFound += mediaFiles.length;
+    localStats.filesFound = mediaFiles.length;
 
     if (mediaFiles.length === 0) {
-      return;
+      return localStats;
     }
 
     mediaFiles.sort((a, b) => {
@@ -284,38 +287,57 @@ async function processFolderParallel(
 
         const downloadUrl = await onedrive.getDownloadUrl(file.id);
         if (!downloadUrl) {
-          stats.errors++;
+          localStats.errors++;
           continue;
         }
 
         let message;
-        if (isVideo) {
-          message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
-        } else {
-          message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        while (retryCount < maxRetries) {
+          try {
+            if (isVideo) {
+              message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
+            } else {
+              message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
+            }
+            break; // Erfolgreich
+          } catch (sendError: any) {
+            if (sendError?.error_code === 429) {
+              const retryAfter = sendError?.parameters?.retry_after || 10;
+              console.log(`   ⏳ [${folder.name}] Rate limit - warte ${retryAfter}s (Versuch ${retryCount + 1}/${maxRetries})`);
+              await bot.delay(retryAfter * 1000);
+              retryCount++;
+            } else {
+              throw sendError;
+            }
+          }
         }
 
         if (message) {
           await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
-          stats.filesPosted++;
+          localStats.filesPosted++;
           console.log(`   ✅ [${folder.name}] ${file.name}`);
         } else {
-          stats.errors++;
+          localStats.errors++;
         }
 
         await bot.delay(config.rateLimitDelay);
 
       } catch (fileError) {
         console.error(`   ❌ [${folder.name}] ${file.name}:`, fileError);
-        stats.errors++;
+        localStats.errors++;
       }
     }
 
-    console.log(`✅ [${folder.name}] Fertig (${stats.filesPosted} gepostet)`);
+    console.log(`✅ [${folder.name}] Fertig (${localStats.filesPosted} gepostet)`);
+    return localStats;
 
   } catch (folderError) {
     console.error(`❌ [${folder.name}] Ordner-Fehler:`, folderError);
-    stats.errors++;
+    localStats.errors++;
+    return localStats;
   }
 }
 
@@ -338,7 +360,8 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     
     const lockAcquired = await acquireSyncLock();
     if (!lockAcquired) {
-      console.log('⏸️  Synchronisierung läuft bereits - überspringe');
+      const lockInfo = await getSyncLockInfo();
+      console.log(`⏸️  Synchronisierung läuft bereits - überspringe`);
       stats.duration = Date.now() - startTime;
       return stats;
     }
@@ -362,24 +385,34 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 2 Ordner gleichzeitig (weniger = stabiler bei Telegram Rate Limits)
+    // PARALLEL: 2 Ordner gleichzeitig
     const CONCURRENT = 2;
     
     for (let i = 0; i < folders.length; i += CONCURRENT) {
       const batch = folders.slice(i, i + CONCURRENT);
       console.log(`\n📦 Batch ${Math.floor(i / CONCURRENT) + 1}/${Math.ceil(folders.length / CONCURRENT)}: ${batch.map(f => f.name).join(', ')}`);
       
-      await Promise.all(
+      const batchResults = await Promise.all(
         batch.map(folder => 
-          processFolderParallel(folder, onedrive, bot, topicManager, config, stats)
+          processFolderParallel(folder, onedrive, bot, topicManager, config)
         )
       );
+
+      // Aggregiere Statistiken
+      batchResults.forEach(result => {
+        stats.foldersScanned++;
+        stats.filesFound += result.filesFound;
+        stats.filesPosted += result.filesPosted;
+        stats.errors += result.errors;
+      });
+
+      console.log(`   📊 Batch-Fortschritt: ${stats.filesPosted} von ${stats.filesFound} Dateien gepostet`);
     }
 
     stats.duration = Date.now() - startTime;
 
     console.log('\n✨ Synchronisierung abgeschlossen');
-    console.log(`📊 Statistiken:`);
+    console.log(`📊 Finale Statistiken:`);
     console.log(`   - Ordner: ${stats.foldersScanned}`);
     console.log(`   - Dateien gefunden: ${stats.filesFound}`);
     console.log(`   - Dateien gepostet: ${stats.filesPosted}`);
@@ -396,4 +429,21 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     await releaseSyncLock();
     throw error;
   }
+}
+
+// Helper-Funktion für Lock-Info
+async function getSyncLockInfo(): Promise<{ isLocked: boolean; since?: number }> {
+  try {
+    const { getRedisClient } = await import('./store');
+    const redis = await getRedisClient();
+    if (redis) {
+      const lockTime = await redis.get('sync_lock');
+      if (lockTime) {
+        return { isLocked: true, since: parseInt(lockTime) };
+      }
+    }
+  } catch (error) {
+    console.error('Fehler beim Abrufen der Lock-Info:', error);
+  }
+  return { isLocked: false };
 }
