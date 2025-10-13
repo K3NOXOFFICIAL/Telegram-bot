@@ -324,9 +324,9 @@
             }
         }
 
-        async function startSync() {
-            const btn = event.target;
-            btn.disabled = true;
+        async function startSync(event) {
+            const btn = event?.target;
+            if (btn) btn.disabled = true;
             
             showAlert('🚀 Starting sync...', 'info');
             updateOutput({ status: 'Starting sync...' }, '▶️ Start Sync');
@@ -348,13 +348,13 @@
                 updateOutput({ error: error.message }, '❌ Error');
                 showAlert('❌ Error: ' + error.message, 'error');
             } finally {
-                btn.disabled = false;
+                if (btn) btn.disabled = false;
             }
         }
 
-        async function stopSync() {
-            const btn = event.target;
-            btn.disabled = true;
+        async function stopSync(event) {
+            const btn = event?.target;
+            if (btn) btn.disabled = true;
             
             showAlert('⏸️ Stopping sync...', 'info');
             updateOutput({ status: 'Stopping sync...' }, '⏸️ Stop Sync');
@@ -375,14 +375,20 @@
                 updateOutput({ error: error.message }, '❌ Error');
                 showAlert('❌ Error: ' + error.message, 'error');
             } finally {
-                btn.disabled = false;
+                if (btn) btn.disabled = false;
             }
         }
 
-        async function checkStatus(silent = false) {
-            if (!silent) {
-                const btn = event.target;
-                if (btn) btn.disabled = true;
+        async function checkStatus(event, silent = false) {
+            // Handle both direct calls and event-based calls
+            if (typeof event === 'boolean') {
+                silent = event;
+                event = null;
+            }
+            
+            const btn = event?.target;
+            if (!silent && btn) {
+                btn.disabled = true;
             }
             
             if (!silent) {
@@ -416,19 +422,19 @@
                     showAlert('❌ Error: ' + error.message, 'error');
                 }
             } finally {
-                if (!silent && event.target) {
-                    event.target.disabled = false;
+                if (!silent && btn) {
+                    btn.disabled = false;
                 }
             }
         }
 
-        async function clearRedis() {
+        async function clearRedis(event) {
             if (!confirm('⚠️ This will clear ALL data (topics & posted files). Continue?')) {
                 return;
             }
             
-            const btn = event.target;
-            btn.disabled = true;
+            const btn = event?.target;
+            if (btn) btn.disabled = true;
             
             showAlert('🗑️ Clearing Redis...', 'info');
             updateOutput({ status: 'Clearing Redis store...' }, '🗑️ Clear Redis');
@@ -449,13 +455,13 @@
                 updateOutput({ error: error.message }, '❌ Error');
                 showAlert('❌ Error: ' + error.message, 'error');
             } finally {
-                btn.disabled = false;
+                if (btn) btn.disabled = false;
             }
         }
 
         // Auto-load status on page load
         window.addEventListener('load', () => {
-            setTimeout(checkStatus, 500);
+            setTimeout(() => checkStatus(null, false), 500);
         });
     </script>
 </body>
