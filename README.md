@@ -4,11 +4,13 @@ Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) au
 
 ## 🎯 Funktionen
 
-- ✅ Überwacht einen OneDrive-Ordner auf neue Unterordner
+- ✅ Überwacht einen SharePoint/OneDrive-Ordner auf neue Unterordner
+- ✅ **Rekursive Suche**: Findet Dateien auch in Unterordnern (z.B. `images/`, `videos/`)
 - ✅ Erstellt automatisch Telegram Topics basierend auf Ordnernamen
 - ✅ Postet alle Bilder und Videos in die passenden Topics
-- ✅ Vermeidet Duplikate durch persistente Speicherung
+- ✅ Vermeidet Duplikate durch persistente Redis-Speicherung
 - ✅ Rate-Limiting für sanfte Verarbeitung großer Mediensammlungen
+- ✅ Automatische Synchronisierung alle 5 Minuten (Cron-Job)
 - ✅ Vercel-kompatibel mit Serverless Functions
 - ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
 
@@ -108,10 +110,17 @@ Folge den Anweisungen und wähle:
 - Project name: `telegram-onedrive-bot`
 - Directory: `./`
 
-### 2. Vercel KV (Redis) Storage einrichten
+### 2. Redis Storage einrichten
 
-**WICHTIG:** Ohne Vercel KV werden Topic-Mappings nicht persistent gespeichert!
+**WICHTIG:** Ohne Redis werden Topic-Mappings nicht persistent gespeichert und Topics werden bei jedem Neustart doppelt erstellt!
 
+**Option A: Redis Cloud (empfohlen)**
+1. Erstelle kostenlosen Account auf [redis.io](https://redis.io/cloud)
+2. Erstelle eine neue Redis-Datenbank
+3. Kopiere die Connection-URL (Format: `redis://default:password@host:port`)
+4. Füge als Environment Variable hinzu: `REDIS_URL`
+
+**Option B: Vercel KV (Alternative)**
 1. Gehe zu: https://vercel.com/dashboard
 2. Wähle dein Projekt → **Storage** Tab
 3. Klicke auf **Create Database**
@@ -124,7 +133,11 @@ Folge den Anweisungen und wähle:
    - `KV_REST_API_TOKEN`
    - `KV_REST_API_READ_ONLY_TOKEN`
 
+Der Bot priorisiert automatisch: `REDIS_URL` → Vercel KV → In-Memory (nicht persistent!)
+
 ### 3. Umgebungsvariablen setzen
+
+**Benötigte Environment Variables:**
 
 ```powershell
 vercel env add TELEGRAM_BOT_TOKEN
@@ -136,9 +149,12 @@ vercel env add SHAREPOINT_SITE_ID
 vercel env add SHAREPOINT_DRIVE_ID
 vercel env add ONEDRIVE_FOLDER_PATH
 vercel env add RATE_LIMIT_DELAY
+vercel env add REDIS_URL
 ```
 
 Oder im Vercel Dashboard unter "Settings" → "Environment Variables"
+
+**Wichtig:** Fügen Sie `REDIS_URL` hinzu für persistente Speicherung!
 
 ### 4. Deployen
 
