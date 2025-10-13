@@ -37,7 +37,10 @@ export class TopicManager {
     // Speichere das Mapping
     await saveTopicMapping(folderName, topic.message_thread_id, topic.name);
 
-    console.log(`Topic erstellt: ${topic.name} (ID: ${topic.message_thread_id})`);
+    console.log(`✅ Topic erstellt: ${topic.name} (ID: ${topic.message_thread_id})`);
+
+    // Rate limiting - warte kurz vor dem nächsten API-Call
+    await this.bot.delay(1000);
 
     return topic.message_thread_id;
   }
