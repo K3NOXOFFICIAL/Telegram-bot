@@ -622,3 +622,46 @@ export async function getSyncLockStatus(): Promise<{
     return { locked: false };
   }
 }
+
+/**
+ * Speichert den aktuellen Sync-Fortschritt (für Chunked Processing)
+ */
+export async function saveSyncProgress(progress: { currentFolderIndex: number; totalFolders: number } | null): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      if (progress === null) {
+        // Lösche Fortschritt (Sync abgeschlossen)
+        await kvStore.del('sync_progress');
+        console.log('🗑️  Sync-Fortschritt gelöscht');
+      } else {
+        await kvStore.set('sync_progress', progress);
+        console.log(`💾 Fortschritt gespeichert: ${progress.currentFolderIndex}/${progress.totalFolders}`);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Speichern des Fortschritts:', error);
+  }
+}
+
+/**
+ * Lädt den aktuellen Sync-Fortschritt
+ */
+export async function getSyncProgress(): Promise<{ currentFolderIndex: number; totalFolders: number } | null> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      const progress = await kvStore.get('sync_progress');
+      if (progress) {
+        console.log(`📂 Fortschritt geladen: Ordner ${progress.currentFolderIndex}/${progress.totalFolders}`);
+        return progress;
+      }
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Laden des Fortschritts:', error);
+  }
+  
+  return null;
+}

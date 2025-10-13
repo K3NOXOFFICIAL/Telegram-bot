@@ -54,10 +54,49 @@ export default async function handler(
     // Starte PARALLELE Synchronisierung
     const stats = await syncOneDriveToTelegramParallel(config);
 
-    // Erfolgreiche Antwort
+    // Prüfe ob Fortsetzung nötig ist
+    if ((stats as any).needsContinuation) {
+      console.log('🔄 Sync benötigt Fortsetzung - triggere neuen Request...');
+      
+      // Starte asynchron einen neuen Sync-Request nach kurzer Pause
+      setTimeout(async () => {
+        try {
+          console.log('▶️  Auto-Continue: Starte nächsten Chunk...');
+          const baseUrl = `https://${req.headers.host}`;
+          const continueUrl = `${baseUrl}/api/sync`;
+          
+          // Mache einen Request zu uns selbst
+          const response = await fetch(continueUrl, {
+            method: 'POST',
+            headers: {
+              'x-auth-token': authToken as string || ''
+            }
+          });
+          
+          if (response.ok) {
+            console.log('✅ Auto-Continue erfolgreich gestartet');
+          } else {
+            console.error('❌ Auto-Continue fehlgeschlagen:', response.status);
+          }
+        } catch (error) {
+          console.error('❌ Fehler bei Auto-Continue:', error);
+        }
+      }, 2000); // 2 Sekunden Pause
+      
+      return res.status(202).json({
+        success: true,
+        stats,
+        message: 'Sync läuft weiter - wird automatisch fortgesetzt',
+        needsContinuation: true,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Erfolgreiche Antwort (komplett abgeschlossen)
     return res.status(200).json({
       success: true,
       stats,
+      message: 'Synchronisierung vollständig abgeschlossen',
       timestamp: new Date().toISOString(),
     });
 

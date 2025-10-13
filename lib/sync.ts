@@ -406,10 +406,12 @@ async function processFolderParallel(
  */
 export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise<SyncStats> {
   const startTime = Date.now();
+  const MAX_EXECUTION_TIME = 4 * 60 * 1000; // 4 Minuten (Sicherheitspuffer von 1 Min)
   
   // Versuche vorherige Stats zu laden
-  const { loadSyncStats, saveSyncStats } = await import('./store');
+  const { loadSyncStats, saveSyncStats, getSyncProgress, saveSyncProgress } = await import('./store');
   const previousStats = await loadSyncStats();
+  const progress = await getSyncProgress();
   
   const stats: SyncStats = previousStats || {
     foldersScanned: 0,
@@ -426,6 +428,10 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
 
   try {
     console.log('🔄 Starte PARALLELE Synchronisierung...');
+    
+    if (progress) {
+      console.log(`📍 Setze fort bei Ordner ${progress.currentFolderIndex + 1}`);
+    }
     
     const lockAcquired = await acquireSyncLock();
     if (!lockAcquired) {
@@ -444,14 +450,26 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     if (folders.length === 0) {
       console.log('⚠️ Keine Ordner gefunden');
       stats.duration = Date.now() - startTime;
+      await saveSyncProgress(null); // Kein Fortschritt zu speichern
       await releaseSyncLock();
       return stats;
     }
 
     // PARALLEL: 3 Ordner gleichzeitig (erhöht von 2)
     const CONCURRENT = 3;
+    const startIndex = progress?.currentFolderIndex || 0;
+    let needsContinuation = false;
     
-    for (let i = 0; i < folders.length; i += CONCURRENT) {
+    for (let i = startIndex; i < folders.length; i += CONCURRENT) {
+      // Prüfe ob wir dem Timeout nahe kommen
+      const elapsed = Date.now() - startTime;
+      if (elapsed > MAX_EXECUTION_TIME) {
+        console.log(`⏰ Zeit-Limit erreicht (${Math.round(elapsed/1000)}s) - stoppe und speichere Fortschritt`);
+        needsContinuation = true;
+        await saveSyncProgress({ currentFolderIndex: i, totalFolders: folders.length });
+        break;
+      }
+      
       const batch = folders.slice(i, i + CONCURRENT);
       const batchNum = Math.floor(i / CONCURRENT) + 1;
       const totalBatches = Math.ceil(folders.length / CONCURRENT);
@@ -491,6 +509,30 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
 
     stats.duration = Date.now() - startTime;
 
+    if (needsContinuation) {
+      console.log('\n⏸️ Synchronisierung pausiert - wird automatisch fortgesetzt');
+      console.log(`📊 Zwischenstand:`);
+      console.log(`   - Ordner: ${stats.foldersScanned}/${folders.length}`);
+      console.log(`   - Dateien gefunden: ${stats.filesFound}`);
+      console.log(`   - Dateien gepostet: ${stats.filesPosted}`);
+      console.log(`   - Fehler: ${stats.errors}`);
+      console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
+      
+      // Speichere Stats mit 'needs continuation' Flag
+      await saveSyncStats({
+        ...stats,
+        lastUpdate: Date.now(),
+        isRunning: false,
+        needsContinuation: true
+      });
+      
+      await releaseSyncLock();
+      
+      // Triggere automatische Fortsetzung (nach 2 Sekunden Pause)
+      console.log('🔄 Triggere automatische Fortsetzung...');
+      return stats;
+    }
+
     console.log('\n✨ Synchronisierung abgeschlossen');
     console.log(`📊 Finale Statistiken:`);
     console.log(`   - Ordner: ${stats.foldersScanned}`);
@@ -499,11 +541,13 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     console.log(`   - Fehler: ${stats.errors}`);
     console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
 
-    // Markiere als abgeschlossen und speichere
+    // Markiere als abgeschlossen und lösche Fortschritt
+    await saveSyncProgress(null);
     await saveSyncStats({
       ...stats,
       lastUpdate: Date.now(),
-      isRunning: false
+      isRunning: false,
+      needsContinuation: false
     });
 
     await releaseSyncLock();

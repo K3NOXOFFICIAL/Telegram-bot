@@ -357,13 +357,41 @@ Telegram erlaubt ca. 20-30 Nachrichten pro Sekunde pro Gruppe. Bei großen Menge
 RATE_LIMIT_DELAY=3000  # 3 Sekunden zwischen Posts
 ```
 
-### Vercel Timeout
+### Vercel Timeout / Function Max Duration
 
-Serverless Functions haben ein Timeout (Hobby: 10s, Pro: 60s). Bei vielen Dateien:
+**Problem:** "Function invocation timed out" oder "504 Gateway Timeout"
 
-1. Reduziere die Anzahl der Dateien pro Sync
-2. Nutze Vercel Pro für längere Timeouts
-3. Implementiere Background-Processing
+**Ursache:** Synchronisierung dauert länger als erlaubte Function-Dauer
+
+**Lösung:**
+
+Die `vercel.json` ist bereits konfiguriert für **300 Sekunden (5 Minuten)**:
+```json
+{
+  "functions": {
+    "api/sync.ts": { "maxDuration": 300 }
+  }
+}
+```
+
+**Erfordert Vercel Pro Plan!**
+
+**Bei weiterhin Timeouts:**
+
+1. **Optimiere Parallelität:**
+   ```typescript
+   // In lib/sync.ts
+   const CONCURRENT = 4; // Mehr Ordner parallel (Standard: 3)
+   ```
+
+2. **Reduziere Rate-Limit-Delay:**
+   ```env
+   RATE_LIMIT_DELAY=1500  # Schneller (Standard: 2000)
+   ```
+
+3. **Upgrade zu Enterprise Plan** (bis 900s)
+
+**Siehe:** [VERCEL_TIMEOUT.md](./VERCEL_TIMEOUT.md) für Details
 
 ## 📚 Weitere Ressourcen
 

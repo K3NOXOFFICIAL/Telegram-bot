@@ -1,4 +1,12 @@
 {
+  "functions": {
+    "api/sync.ts": {
+      "maxDuration": 300
+    },
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
+  },
   "crons": [],
   "rewrites": [
     {
