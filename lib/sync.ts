@@ -73,9 +73,9 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
           continue;
         }
 
-        // Hole alle Dateien aus dem Ordner
-        const files = await onedrive.listFilesInFolder(folder.path);
-        console.log(`   📄 ${files.length} Dateien insgesamt gefunden`);
+        // Hole alle Dateien aus dem Ordner UND Unterordnern (z.B. images/, videos/)
+        const files = await onedrive.listFilesRecursive(folder.path);
+        console.log(`   📄 ${files.length} Dateien insgesamt gefunden (inkl. Unterordner)`);
         
         const mediaFiles = files.filter(file => onedrive.isMediaFile(file));
         console.log(`   🎬 ${mediaFiles.length} Mediendateien (Bilder/Videos) gefunden`);

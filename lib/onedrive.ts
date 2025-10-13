@@ -147,6 +147,57 @@ export class OneDriveClient {
   }
 
   /**
+   * Listet rekursiv alle Dateien in einem Ordner und seinen Unterordnern auf
+   */
+  async listFilesRecursive(folderPath: string, maxDepth: number = 2): Promise<OneDriveItem[]> {
+    const allFiles: OneDriveItem[] = [];
+    
+    try {
+      await this.listFilesRecursiveHelper(folderPath, allFiles, 0, maxDepth);
+    } catch (error: any) {
+      console.error(`Fehler beim rekursiven Durchsuchen von ${folderPath}:`, error.message);
+    }
+    
+    return allFiles;
+  }
+
+  /**
+   * Hilfsfunktion für rekursives Durchsuchen
+   */
+  private async listFilesRecursiveHelper(
+    folderPath: string,
+    allFiles: OneDriveItem[],
+    currentDepth: number,
+    maxDepth: number
+  ): Promise<void> {
+    if (currentDepth > maxDepth) {
+      return;
+    }
+
+    try {
+      const endpoint = this.getDriveEndpoint(folderPath, 'children');
+      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+
+      for (const item of response.value) {
+        if (item.file) {
+          // Es ist eine Datei, füge sie hinzu
+          allFiles.push(item);
+        } else if (item.folder && currentDepth < maxDepth) {
+          // Es ist ein Ordner, durchsuche ihn rekursiv
+          const subfolderPath = `${folderPath}/${item.name}`;
+          await this.listFilesRecursiveHelper(subfolderPath, allFiles, currentDepth + 1, maxDepth);
+        }
+      }
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        console.warn(`Ordner nicht gefunden: ${folderPath}`);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  /**
    * Prüft, ob eine Datei ein Bild oder Video ist
    */
   isMediaFile(item: OneDriveItem): boolean {

@@ -27,12 +27,12 @@ async function checkMedia() {
       console.log(`   Pfad: ${folder.path}`);
 
       try {
-        // Hole alle Dateien
-        const files = await onedrive.listFilesInFolder(folder.path);
-        console.log(`   📄 ${files.length} Dateien insgesamt`);
+        // Hole alle Dateien rekursiv (inkl. Unterordner wie images/, videos/)
+        const files = await onedrive.listFilesRecursive(folder.path);
+        console.log(`   📄 ${files.length} Dateien insgesamt (inkl. Unterordner)`);
 
         if (files.length === 0) {
-          console.log(`   ⚠️  Ordner ist leer`);
+          console.log(`   ⚠️  Ordner ist leer (auch in Unterordnern)`);
           continue;
         }
 
