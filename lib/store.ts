@@ -170,20 +170,39 @@ export async function markFileAsPosted(
     postedAt: new Date().toISOString(),
   };
 
+  let redisSuccess = false;
+  let stateSuccess = false;
+
+  // Versuch 1: Speichere in Redis
   try {
     if (kvStore) {
-      // Speichere direkt in Redis mit separatem Key
       await kvStore.set(`file:${fileId}`, postedFile);
+      redisSuccess = true;
     }
   } catch (error) {
-    console.error('Fehler beim Markieren der Datei in KV:', error);
+    console.error('❌ Fehler beim Markieren der Datei in Redis:', error);
   }
 
-  // Auch im bot_state speichern (Fallback)
-  const state = await loadState();
-  state.postedFiles.push(postedFile);
-  state.lastSync = new Date().toISOString();
-  await saveState(state);
+  // Versuch 2: Speichere in bot_state (Fallback)
+  try {
+    const state = await loadState();
+    // Prüfe ob bereits vorhanden (verhindere Duplikate)
+    if (!state.postedFiles.some(f => f.fileId === fileId)) {
+      state.postedFiles.push(postedFile);
+      state.lastSync = new Date().toISOString();
+      await saveState(state);
+      stateSuccess = true;
+    } else {
+      stateSuccess = true; // Bereits vorhanden = Erfolg
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Speichern in bot_state:', error);
+  }
+
+  // Mindestens eine Speichermethode muss erfolgreich sein
+  if (!redisSuccess && !stateSuccess) {
+    throw new Error(`Konnte Datei ${fileName} nicht als gepostet markieren`);
+  }
 }
 
 /**
@@ -226,6 +245,20 @@ export async function saveTopicMapping(
 ): Promise<void> {
   await initializeStore();
   
+  // Validierung: Prüfe ob topicId bereits für einen anderen Ordner verwendet wird
+  const state = await loadState();
+  const conflictingMapping = state.topicMappings.find(
+    m => m.topicId === topicId && m.folderName !== folderName
+  );
+  
+  if (conflictingMapping) {
+    console.warn(`⚠️  Topic ${topicId} ist bereits Ordner '${conflictingMapping.folderName}' zugeordnet`);
+    // Entferne altes Mapping
+    state.topicMappings = state.topicMappings.filter(
+      m => m.topicId !== topicId
+    );
+  }
+  
   const mapping: TopicMapping = {
     folderName,
     topicId,
@@ -241,10 +274,10 @@ export async function saveTopicMapping(
     }
   } catch (error) {
     console.error('Fehler beim Speichern des Topic-Mappings in KV:', error);
+    // Trotzdem in bot_state speichern
   }
 
   // Auch im bot_state speichern (Fallback)
-  const state = await loadState();
   state.topicMappings = state.topicMappings.filter(
     m => m.folderName !== folderName
   );
@@ -298,13 +331,23 @@ export async function loadSyncStats(): Promise<any | null> {
 export async function saveTopicFiles(topicId: number, fileNames: string[]): Promise<void> {
   await initializeStore();
   
+  // Validierung: Entferne Duplikate
+  const uniqueFileNames = Array.from(new Set(fileNames));
+  
+  if (uniqueFileNames.length !== fileNames.length) {
+    console.warn(`⚠️  ${fileNames.length - uniqueFileNames.length} Duplikate in Topic ${topicId} gefunden und entfernt`);
+  }
+  
   try {
     if (kvStore) {
-      await kvStore.set(`topic_files:${topicId}`, fileNames);
-      console.log(`✅ ${fileNames.length} Dateien für Topic ${topicId} gespeichert`);
+      await kvStore.set(`topic_files:${topicId}`, uniqueFileNames);
+      console.log(`✅ ${uniqueFileNames.length} Dateien für Topic ${topicId} gespeichert`);
+    } else {
+      console.warn('⚠️  Kein KV Store - Topic-Dateien können nicht persistent gespeichert werden');
     }
   } catch (error) {
-    console.error('Fehler beim Speichern der Topic-Dateien:', error);
+    console.error('❌ Fehler beim Speichern der Topic-Dateien:', error);
+    throw error; // Wirf Fehler weiter, damit Aufrufer reagieren kann
   }
 }
 
@@ -318,11 +361,17 @@ export async function loadTopicFiles(topicId: number): Promise<Set<string>> {
     if (kvStore) {
       const files = await kvStore.get(`topic_files:${topicId}`);
       if (files && Array.isArray(files)) {
+        console.log(`📝 Lade ${files.length} Dateien für Topic ${topicId}`);
         return new Set(files);
+      } else {
+        console.log(`🆕 Keine gespeicherten Dateien für Topic ${topicId}`);
       }
+    } else {
+      console.log('⚠️  Kein KV Store - kann Topic-Dateien nicht laden');
     }
   } catch (error) {
-    console.error('Fehler beim Laden der Topic-Dateien:', error);
+    console.error('❌ Fehler beim Laden der Topic-Dateien:', error);
+    // Gebe leeres Set zurück statt zu crashen
   }
   
   return new Set();
@@ -332,8 +381,19 @@ export async function loadTopicFiles(topicId: number): Promise<Set<string>> {
  * Prüft ob eine Datei bereits im Topic existiert (anhand des Dateinamens)
  */
 export async function isFileInTopic(topicId: number, fileName: string): Promise<boolean> {
+  if (!fileName || fileName.trim() === '') {
+    console.warn('⚠️  Leerer Dateiname in isFileInTopic');
+    return false;
+  }
+  
   const topicFiles = await loadTopicFiles(topicId);
-  return topicFiles.has(fileName);
+  const exists = topicFiles.has(fileName);
+  
+  if (exists) {
+    console.log(`✅ Datei '${fileName}' bereits in Topic ${topicId}`);
+  }
+  
+  return exists;
 }
 
 /**
@@ -364,6 +424,82 @@ export async function cleanupOldFiles(daysToKeep: number = 30): Promise<number> 
   }
 
   return removedCount;
+}
+
+/**
+ * Holt alle gespeicherten File-IDs aus Redis (für Debugging/Monitoring)
+ */
+export async function getAllPostedFileIds(): Promise<string[]> {
+  await initializeStore();
+  
+  const fileIds: string[] = [];
+  
+  try {
+    if (kvStore && kvStore._client) {
+      // Verwende SCAN um alle file:* Keys zu finden (sicher für große Datensets)
+      const keys = await kvStore._client.keys('file:*');
+      fileIds.push(...keys.map((k: string) => k.replace('file:', '')));
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Abrufen aller File-IDs:', error);
+  }
+  
+  return fileIds;
+}
+
+/**
+ * Prüft die Store-Konsistenz (für Monitoring/Debugging)
+ */
+export async function checkStoreConsistency(): Promise<{
+  redisFiles: number;
+  stateFiles: number;
+  redisTopics: number;
+  stateTopics: number;
+  issues: string[];
+}> {
+  await initializeStore();
+  
+  const report = {
+    redisFiles: 0,
+    stateFiles: 0,
+    redisTopics: 0,
+    stateTopics: 0,
+    issues: [] as string[],
+  };
+  
+  try {
+    // Zähle Redis Files
+    if (kvStore && kvStore._client) {
+      const fileKeys = await kvStore._client.keys('file:*');
+      report.redisFiles = fileKeys.length;
+      
+      const topicKeys = await kvStore._client.keys('topic:*');
+      report.redisTopics = topicKeys.length;
+    }
+    
+    // Zähle State Files
+    const state = await loadState();
+    report.stateFiles = state.postedFiles.length;
+    report.stateTopics = state.topicMappings.length;
+    
+    // Prüfe auf Inkonsistenzen
+    if (report.redisFiles > 0 && report.stateFiles > 0) {
+      if (Math.abs(report.redisFiles - report.stateFiles) > 10) {
+        report.issues.push(`Große Differenz zwischen Redis (${report.redisFiles}) und State (${report.stateFiles}) Files`);
+      }
+    }
+    
+    if (report.redisTopics > 0 && report.stateTopics > 0) {
+      if (report.redisTopics !== report.stateTopics) {
+        report.issues.push(`Topic-Mappings unterschiedlich: Redis=${report.redisTopics}, State=${report.stateTopics}`);
+      }
+    }
+    
+  } catch (error) {
+    report.issues.push(`Fehler bei Konsistenz-Prüfung: ${error}`);
+  }
+  
+  return report;
 }
 
 /**

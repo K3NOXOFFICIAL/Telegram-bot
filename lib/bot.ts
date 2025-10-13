@@ -219,18 +219,19 @@ export class TelegramBot {
   /**
    * Liest alle Nachrichten aus einem Topic und extrahiert Dateinamen
    * Verwendet Updates API um die letzten Nachrichten zu scannen
+   * ⚠️ LIMITATION: getUpdates zeigt nur die letzten ~100 Updates
+   * Für vollständige History müssen wir auf Redis-Cache vertrauen
    */
   async getTopicFileNames(topicId: number): Promise<Set<string>> {
     const fileNames = new Set<string>();
     
     try {
       // Verwende getUpdates um die letzten Messages zu holen
-      // Limitation: getUpdates zeigt nur die letzten ~100 Updates
-      // Für vollständige History müsste man einen Long Polling Bot laufen lassen
       const response = await axios.post<TelegramResponse<any[]>>(
         `${this.baseUrl}/getUpdates`,
         {
-          allowed_updates: ['message']
+          allowed_updates: ['message'],
+          limit: 100 // Maximum
         }
       );
 
@@ -240,34 +241,37 @@ export class TelegramBot {
           
           // Prüfe ob Message im richtigen Topic ist
           if (message?.message_thread_id === topicId) {
-            // Extrahiere Dateiname aus Caption
+            // Caption ist unser primärer Dateiname-Speicher
             if (message.caption) {
               fileNames.add(message.caption);
             }
             
-            // Extrahiere Dateiname aus Photo
-            if (message.photo && message.caption) {
-              fileNames.add(message.caption);
-            }
-            
-            // Extrahiere Dateiname aus Video
-            if (message.video && message.caption) {
-              fileNames.add(message.caption);
-            }
-            
-            // Extrahiere Dateiname aus Document
+            // Fallback: Document filename
             if (message.document?.file_name) {
               fileNames.add(message.document.file_name);
             }
+            
+            // Fallback: Video filename (falls vorhanden)
+            if (message.video?.file_name) {
+              fileNames.add(message.video.file_name);
+            }
           }
+        }
+        
+        console.log(`📋 Topic ${topicId}: ${fileNames.size} existierende Dateien über API gefunden`);
+        
+        // Wichtiger Hinweis: Diese Methode zeigt nur die letzten ~100 Updates
+        // Daher MÜSSEN wir Redis topic_files:topicId als primäre Quelle verwenden
+        if (fileNames.size >= 90) {
+          console.warn(`⚠️  Topic ${topicId} hat viele Dateien (${fileNames.size}). Einige könnten fehlen!`);
+          console.warn(`⚠️  Redis topic_files Cache ist essentiell für Duplikat-Vermeidung!`);
         }
       }
 
-      console.log(`📋 Topic ${topicId}: ${fileNames.size} existierende Dateien gefunden`);
       return fileNames;
       
     } catch (error: any) {
-      console.error('Fehler beim Abrufen der Topic-Nachrichten:', error.response?.data || error.message);
+      console.error('❌ Fehler beim Abrufen der Topic-Nachrichten:', error.response?.data || error.message);
       return fileNames;
     }
   }

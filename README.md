@@ -8,8 +8,11 @@ Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) au
 - ✅ **Rekursive Suche**: Findet Dateien auch in Unterordnern (z.B. `images/`, `videos/`)
 - ✅ Erstellt automatisch Telegram Topics basierend auf Ordnernamen
 - ✅ Postet alle Bilder und Videos in die passenden Topics
-- ✅ Vermeidet Duplikate durch persistente Redis-Speicherung
-- ✅ Rate-Limiting für sanfte Verarbeitung großer Mediensammlungen
+- ✅ **Doppelte Duplikat-Prüfung**: Verhindert Uploads durch Redis File-ID Check + Topic-Scan
+- ✅ **Intelligente Topic-Verwaltung**: Merged existierende Dateien beim Scannen statt zu überschreiben
+- ✅ **Konsistenz-Sicherung**: Speichert Daten sowohl in Redis als auch im Fallback-Store
+- ✅ Rate-Limiting mit automatischem Retry bei Telegram API Limits
+- ✅ **Parallele Verarbeitung**: Verarbeitet mehrere Ordner gleichzeitig (bis zu 2 parallel)
 - ✅ Automatische Synchronisierung alle 5 Minuten (Cron-Job)
 - ✅ Vercel-kompatibel mit Serverless Functions
 - ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
@@ -259,7 +262,28 @@ Dann beim Aufruf:
 Invoke-WebRequest -Uri "https://your-project.vercel.app/api/sync?token=your_secret_token" -Method POST
 ```
 
-## 🗄️ Datenspeicherung
+## � Duplikat-Vermeidung
+
+Der Bot verwendet ein mehrschichtiges System, um doppelte Uploads zu verhindern:
+
+### 1. Redis File-ID Check (Primär)
+Jede hochgeladene Datei wird mit ihrer OneDrive-ID in Redis gespeichert (`file:{fileId}`). Bei jedem Sync wird zuerst geprüft, ob die File-ID bereits existiert.
+
+### 2. Topic-Files Cache (Sekundär)
+Zusätzlich wird eine Liste aller Dateinamen pro Topic gespeichert (`topic_files:{topicId}`). Dies dient als Backup-Prüfung, falls Redis gelöscht wurde.
+
+### 3. Topic-Scan bei jedem Sync
+Bei jedem Sync werden die letzten ~100 Nachrichten aus jedem Topic gescannt und mit dem Cache abgeglichen. Neue Dateien werden automatisch zum Cache hinzugefügt.
+
+### 4. Keine Topic-Duplikate
+Vor der Erstellung eines neuen Topics wird geprüft, ob bereits ein Mapping für diesen Ordner existiert. Topic-IDs werden validiert um Konflikte zu vermeiden.
+
+### 5. Store-Konsistenz
+Alle wichtigen Daten werden sowohl in Redis als auch im Fallback-Store (bot_state) gespeichert. Bei Fehlern wird ein Rollback durchgeführt.
+
+**Wichtig:** Diese Mechanismen funktionieren am besten mit aktiviertem Redis! Ohne Redis können nach einem Deployment-Neustart Duplikate entstehen (werden aber beim nächsten Sync erkannt und übersprungen).
+
+## �🗄️ Datenspeicherung
 
 Der Bot nutzt standardmäßig einen In-Memory Store. Für Production wird empfohlen:
 

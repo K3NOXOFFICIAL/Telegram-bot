@@ -96,9 +96,20 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
         // Verarbeite jede Datei
         for (const file of mediaFiles) {
           try {
-            // Prüfe, ob Datei bereits gepostet wurde
-            if (await isFilePosted(file.id)) {
-              console.log(`⏭️ Überspringe bereits gepostete Datei: ${file.name}`);
+            // Prüfe 1: Redis File-ID Check (wurde bereits hochgeladen?)
+            const alreadyPosted = await isFilePosted(file.id);
+            if (alreadyPosted) {
+              console.log(`⏭️ Überspringe bereits gepostete Datei: ${file.name} (in Redis gefunden)`);
+              continue;
+            }
+
+            // Prüfe 2: Topic-Dateien Check (existiert im Topic?)
+            const { isFileInTopic, loadTopicFiles, saveTopicFiles } = await import('./store');
+            const existsInTopic = await isFileInTopic(topicId, file.name);
+            if (existsInTopic) {
+              console.log(`⏭️ Überspringe: ${file.name} (bereits im Topic)`);
+              // Markiere auch in Redis, um zukünftige Prüfungen zu beschleunigen
+              await markFileAsPosted(file.id, file.name, folder.name, 0);
               continue;
             }
 
@@ -123,19 +134,42 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               continue;
             }
 
-            // Poste Datei
+            // Poste Datei mit Retry-Logik
             let message;
-            if (isVideo) {
-              console.log(`   🎥 Sende Video...`);
-              message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
-            } else {
-              console.log(`   🖼️  Sende Bild...`);
-              message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
+            let retryCount = 0;
+            const maxRetries = 3;
+
+            while (retryCount < maxRetries) {
+              try {
+                if (isVideo) {
+                  console.log(`   🎥 Sende Video...`);
+                  message = await bot.sendVideoByUrl(downloadUrl, file.name, topicId);
+                } else {
+                  console.log(`   🖼️  Sende Bild...`);
+                  message = await bot.sendPhotoByUrl(downloadUrl, file.name, topicId);
+                }
+                break; // Erfolgreich
+              } catch (sendError: any) {
+                if (sendError?.error_code === 429) {
+                  const retryAfter = sendError?.parameters?.retry_after || 10;
+                  console.log(`   ⏳ Rate limit - warte ${retryAfter}s (Versuch ${retryCount + 1}/${maxRetries})`);
+                  await bot.delay(retryAfter * 1000);
+                  retryCount++;
+                } else {
+                  throw sendError;
+                }
+              }
             }
 
             if (message) {
-              // Markiere als gepostet
+              // Markiere als gepostet in Redis
               await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
+              
+              // Füge Dateiname auch zur Topic-Files-Liste hinzu
+              const topicFiles = await loadTopicFiles(topicId);
+              topicFiles.add(file.name);
+              await saveTopicFiles(topicId, Array.from(topicFiles));
+              
               stats.filesPosted++;
               console.log(`   ✅ Erfolgreich gepostet: ${file.name}`);
             } else {
@@ -323,17 +357,24 @@ async function processFolderParallel(
         }
 
         if (message) {
+          // Speichere in Redis file:ID
           await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
           
           // Füge Dateiname auch zur Topic-Files-Liste hinzu
-          const { loadTopicFiles, saveTopicFiles } = await import('./store');
-          const topicFiles = await loadTopicFiles(topicId);
-          topicFiles.add(file.name);
-          await saveTopicFiles(topicId, Array.from(topicFiles));
+          try {
+            const { loadTopicFiles, saveTopicFiles } = await import('./store');
+            const topicFiles = await loadTopicFiles(topicId);
+            topicFiles.add(file.name);
+            await saveTopicFiles(topicId, Array.from(topicFiles));
+          } catch (topicFilesError) {
+            console.error(`   ⚠️  [${folder.name}] Konnte topic_files nicht aktualisieren:`, topicFilesError);
+            // Nicht kritisch, da file:ID bereits gespeichert wurde
+          }
           
           localStats.filesPosted++;
           console.log(`   ✅ [${folder.name}] ${file.name}`);
         } else {
+          console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen: ${file.name}`);
           localStats.errors++;
         }
 
