@@ -108,7 +108,23 @@ Folge den Anweisungen und wähle:
 - Project name: `telegram-onedrive-bot`
 - Directory: `./`
 
-### 2. Umgebungsvariablen setzen
+### 2. Vercel KV (Redis) Storage einrichten
+
+**WICHTIG:** Ohne Vercel KV werden Topic-Mappings nicht persistent gespeichert!
+
+1. Gehe zu: https://vercel.com/dashboard
+2. Wähle dein Projekt → **Storage** Tab
+3. Klicke auf **Create Database**
+4. Wähle **KV (Redis)**
+5. Gib einen Namen ein (z.B. "telegram-bot-storage")
+6. Wähle die gleiche Region wie dein Deployment
+7. Klicke auf **Create**
+8. Vercel fügt automatisch diese Environment Variables hinzu:
+   - `KV_REST_API_URL`
+   - `KV_REST_API_TOKEN`
+   - `KV_REST_API_READ_ONLY_TOKEN`
+
+### 3. Umgebungsvariablen setzen
 
 ```powershell
 vercel env add TELEGRAM_BOT_TOKEN
@@ -116,13 +132,15 @@ vercel env add TELEGRAM_CHAT_ID
 vercel env add MICROSOFT_CLIENT_ID
 vercel env add MICROSOFT_CLIENT_SECRET
 vercel env add MICROSOFT_TENANT_ID
+vercel env add SHAREPOINT_SITE_ID
+vercel env add SHAREPOINT_DRIVE_ID
 vercel env add ONEDRIVE_FOLDER_PATH
 vercel env add RATE_LIMIT_DELAY
 ```
 
 Oder im Vercel Dashboard unter "Settings" → "Environment Variables"
 
-### 3. Deployen
+### 4. Deployen
 
 ```powershell
 npm run deploy

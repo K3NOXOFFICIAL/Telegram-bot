@@ -13,22 +13,73 @@ let memoryStore: BotState = {
 };
 
 /**
- * Vercel KV Store (wenn verfügbar)
+ * Redis/KV Store (wenn verfügbar)
  */
 let kvStore: any = null;
+let storeInitialized = false;
+let storeInitializing: Promise<void> | null = null;
 
-// Versuche Vercel KV zu laden
-try {
-  const { kv } = require('@vercel/kv');
-  kvStore = kv;
-} catch (error) {
-  console.log('Vercel KV nicht verfügbar, nutze In-Memory Store');
+// Versuche Redis-Store zu initialisieren
+async function initializeStore() {
+  if (storeInitialized) return;
+  if (storeInitializing) return storeInitializing;
+  
+  storeInitializing = (async () => {
+    // Priorität 1: REDIS_URL (Standard Redis)
+    if (process.env.REDIS_URL) {
+      try {
+        const { createClient } = require('redis');
+        const client = createClient({
+          url: process.env.REDIS_URL
+        });
+        
+        await client.connect();
+        console.log('✅ Redis verbunden (REDIS_URL)');
+        
+        // Erstelle ein KV-kompatibles Interface
+        kvStore = {
+          get: async (key: string) => {
+            const data = await client.get(key);
+            return data ? JSON.parse(data) : null;
+          },
+          set: async (key: string, value: any) => {
+            await client.set(key, JSON.stringify(value));
+          }
+        };
+        storeInitialized = true;
+        return;
+      } catch (error) {
+        console.log('❌ Redis-Verbindung fehlgeschlagen:', error);
+      }
+    }
+    
+    // Priorität 2: Vercel KV (nur wenn KV_REST_API_URL gesetzt ist)
+    if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+      try {
+        const { kv } = require('@vercel/kv');
+        kvStore = kv;
+        console.log('✅ Vercel KV verbunden');
+        storeInitialized = true;
+        return;
+      } catch (error) {
+        console.log('❌ Vercel KV fehlgeschlagen:', error);
+      }
+    }
+    
+    // Fallback: In-Memory Store
+    console.log('⚠️  Nutze In-Memory Store (keine persistente Speicherung)');
+    storeInitialized = true;
+  })();
+  
+  return storeInitializing;
 }
 
 /**
  * Lädt den aktuellen Bot-Status
  */
 export async function loadState(): Promise<BotState> {
+  await initializeStore();
+  
   try {
     if (kvStore) {
       const state = await kvStore.get('bot_state');
@@ -47,6 +98,8 @@ export async function loadState(): Promise<BotState> {
  * Speichert den Bot-Status
  */
 export async function saveState(state: BotState): Promise<void> {
+  await initializeStore();
+  
   try {
     if (kvStore) {
       await kvStore.set('bot_state', state);

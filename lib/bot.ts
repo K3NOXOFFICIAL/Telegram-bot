@@ -195,6 +195,21 @@ export class TelegramBot {
   }
 
   /**
+   * Holt alle existierenden Forum Topics
+   */
+  async getForumTopics(): Promise<Array<{ message_thread_id: number; name: string }>> {
+    try {
+      // Telegram API hat leider keine direkte Methode zum Abrufen aller Topics
+      // Wir müssen stattdessen über getUpdates gehen, aber das ist nicht praktikabel
+      // Daher geben wir eine leere Liste zurück
+      return [];
+    } catch (error: any) {
+      console.error('Fehler beim Abrufen der Topics:', error.response?.data || error.message);
+      return [];
+    }
+  }
+
+  /**
    * Erstellt ein neues Forum Topic
    */
   async createForumTopic(name: string): Promise<TelegramTopic | null> {
