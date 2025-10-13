@@ -17,6 +17,8 @@ export function loadConfig(): BotConfig {
     microsoftTenantId: process.env.MICROSOFT_TENANT_ID || '',
     onedriveFolderPath: process.env.ONEDRIVE_FOLDER_PATH || '/Fotos',
     rateLimitDelay: parseInt(process.env.RATE_LIMIT_DELAY || '2000', 10),
+    sharepointSiteId: process.env.SHAREPOINT_SITE_ID,
+    sharepointDriveId: process.env.SHAREPOINT_DRIVE_ID,
   };
 
   // Validierung

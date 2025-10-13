@@ -76,13 +76,34 @@ export class OneDriveClient {
   }
 
   /**
+   * Erstellt den richtigen API-Endpunkt basierend auf SharePoint oder OneDrive
+   */
+  private getDriveEndpoint(path: string, action: 'children' | 'item' = 'children'): string {
+    // Wenn SharePoint Site und Drive IDs vorhanden sind, verwende SharePoint-Endpunkt
+    if (this.config.sharepointSiteId && this.config.sharepointDriveId) {
+      const encodedPath = encodeURIComponent(path);
+      if (action === 'children') {
+        return `/sites/${this.config.sharepointSiteId}/drives/${this.config.sharepointDriveId}/root:${encodedPath}:/children`;
+      } else {
+        return `/sites/${this.config.sharepointSiteId}/drives/${this.config.sharepointDriveId}/root:${encodedPath}`;
+      }
+    }
+    
+    // Fallback zu persönlichem OneDrive
+    const encodedPath = encodeURIComponent(path);
+    if (action === 'children') {
+      return `/me/drive/root:${encodedPath}:/children`;
+    } else {
+      return `/me/drive/root:${encodedPath}`;
+    }
+  }
+
+  /**
    * Listet alle Unterordner in einem bestimmten Pfad auf
    */
   async listSubfolders(folderPath: string): Promise<OneDriveFolder[]> {
     try {
-      // Kodiere den Pfad für die URL
-      const encodedPath = encodeURIComponent(folderPath);
-      const endpoint = `/me/drive/root:${encodedPath}:/children`;
+      const endpoint = this.getDriveEndpoint(folderPath, 'children');
 
       const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
 
@@ -110,8 +131,7 @@ export class OneDriveClient {
    */
   async listFilesInFolder(folderPath: string): Promise<OneDriveItem[]> {
     try {
-      const encodedPath = encodeURIComponent(folderPath);
-      const endpoint = `/me/drive/root:${encodedPath}:/children`;
+      const endpoint = this.getDriveEndpoint(folderPath, 'children');
 
       const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
 
@@ -155,7 +175,14 @@ export class OneDriveClient {
   async downloadFile(fileId: string): Promise<Buffer> {
     try {
       const token = await this.getAccessToken();
-      const endpoint = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`;
+      
+      // Verwende SharePoint oder OneDrive Endpunkt
+      let endpoint: string;
+      if (this.config.sharepointSiteId && this.config.sharepointDriveId) {
+        endpoint = `https://graph.microsoft.com/v1.0/sites/${this.config.sharepointSiteId}/drives/${this.config.sharepointDriveId}/items/${fileId}/content`;
+      } else {
+        endpoint = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`;
+      }
 
       const response = await axios.get(endpoint, {
         headers: {
@@ -176,7 +203,13 @@ export class OneDriveClient {
    */
   async getDownloadUrl(fileId: string): Promise<string> {
     try {
-      const endpoint = `/me/drive/items/${fileId}`;
+      let endpoint: string;
+      if (this.config.sharepointSiteId && this.config.sharepointDriveId) {
+        endpoint = `/sites/${this.config.sharepointSiteId}/drives/${this.config.sharepointDriveId}/items/${fileId}`;
+      } else {
+        endpoint = `/me/drive/items/${fileId}`;
+      }
+      
       const response = await this.graphApiCall<OneDriveItem>(endpoint);
 
       if (response['@microsoft.graph.downloadUrl']) {

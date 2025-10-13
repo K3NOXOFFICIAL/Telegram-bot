@@ -80,4 +80,6 @@ export interface BotConfig {
   microsoftTenantId: string;
   onedriveFolderPath: string;
   rateLimitDelay: number;
+  sharepointSiteId?: string;
+  sharepointDriveId?: string;
 }
