@@ -65,10 +65,20 @@ export interface TopicMapping {
   createdAt: string;
 }
 
+export interface SyncStats {
+  filesFound: number;
+  filesPosted: number;
+  errors: number;
+  foldersProcessed: number;
+  startTime: number;
+  lastUpdate: number;
+}
+
 export interface BotState {
   postedFiles: PostedFile[];
   topicMappings: TopicMapping[];
   lastSync: string;
+  currentStats?: SyncStats;
 }
 
 // Konfigurationstyp

@@ -217,6 +217,62 @@ export class TelegramBot {
   }
 
   /**
+   * Liest alle Nachrichten aus einem Topic und extrahiert Dateinamen
+   * Verwendet Updates API um die letzten Nachrichten zu scannen
+   */
+  async getTopicFileNames(topicId: number): Promise<Set<string>> {
+    const fileNames = new Set<string>();
+    
+    try {
+      // Verwende getUpdates um die letzten Messages zu holen
+      // Limitation: getUpdates zeigt nur die letzten ~100 Updates
+      // Für vollständige History müsste man einen Long Polling Bot laufen lassen
+      const response = await axios.post<TelegramResponse<any[]>>(
+        `${this.baseUrl}/getUpdates`,
+        {
+          allowed_updates: ['message']
+        }
+      );
+
+      if (response.data.ok && response.data.result) {
+        for (const update of response.data.result) {
+          const message = update.message;
+          
+          // Prüfe ob Message im richtigen Topic ist
+          if (message?.message_thread_id === topicId) {
+            // Extrahiere Dateiname aus Caption
+            if (message.caption) {
+              fileNames.add(message.caption);
+            }
+            
+            // Extrahiere Dateiname aus Photo
+            if (message.photo && message.caption) {
+              fileNames.add(message.caption);
+            }
+            
+            // Extrahiere Dateiname aus Video
+            if (message.video && message.caption) {
+              fileNames.add(message.caption);
+            }
+            
+            // Extrahiere Dateiname aus Document
+            if (message.document?.file_name) {
+              fileNames.add(message.document.file_name);
+            }
+          }
+        }
+      }
+
+      console.log(`📋 Topic ${topicId}: ${fileNames.size} existierende Dateien gefunden`);
+      return fileNames;
+      
+    } catch (error: any) {
+      console.error('Fehler beim Abrufen der Topic-Nachrichten:', error.response?.data || error.message);
+      return fileNames;
+    }
+  }
+
+  /**
    * Holt alle existierenden Forum Topics
    */
   async getForumTopics(): Promise<Array<{ message_thread_id: number; name: string }>> {

@@ -6,7 +6,7 @@
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateConfig } from '../lib/config';
-import { loadState, getAllTopicMappings } from '../lib/store';
+import { loadState, getAllTopicMappings, loadSyncStats } from '../lib/store';
 
 export default async function handler(
   req: VercelRequest,
@@ -29,6 +29,7 @@ export default async function handler(
     // Lade Bot-Status
     const state = await loadState();
     const mappings = await getAllTopicMappings();
+    const syncStats = await loadSyncStats();
 
     // Erstelle Status-Response
     const status = {
@@ -45,6 +46,7 @@ export default async function handler(
         totalTopicMappings: state.topicMappings.length,
         lastSync: state.lastSync,
       },
+      currentSync: syncStats || null,
       topics: mappings.map(m => ({
         folderName: m.folderName,
         topicName: m.topicName,

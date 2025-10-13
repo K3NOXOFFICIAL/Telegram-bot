@@ -273,7 +273,20 @@ async function processFolderParallel(
 
     for (const file of mediaFiles) {
       try {
-        if (await isFilePosted(file.id)) {
+        // Prüfe 1: Redis File-ID Check (wurde bereits hochgeladen?)
+        const alreadyPosted = await isFilePosted(file.id);
+        if (alreadyPosted) {
+          console.log(`   ⏭️  [${folder.name}] Überspringe: ${file.name} (in Redis gefunden)`);
+          continue;
+        }
+
+        // Prüfe 2: Topic-Dateien Check (existiert im Topic?)
+        const { isFileInTopic } = await import('./store');
+        const existsInTopic = await isFileInTopic(topicId, file.name);
+        if (existsInTopic) {
+          console.log(`   ⏭️  [${folder.name}] Überspringe: ${file.name} (bereits im Topic)`);
+          // Markiere auch in Redis, um zukünftige Prüfungen zu beschleunigen
+          await markFileAsPosted(file.id, file.name, folder.name, 0);
           continue;
         }
 
@@ -317,6 +330,13 @@ async function processFolderParallel(
 
         if (message) {
           await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
+          
+          // Füge Dateiname auch zur Topic-Files-Liste hinzu
+          const { loadTopicFiles, saveTopicFiles } = await import('./store');
+          const topicFiles = await loadTopicFiles(topicId);
+          topicFiles.add(file.name);
+          await saveTopicFiles(topicId, Array.from(topicFiles));
+          
           localStats.filesPosted++;
           console.log(`   ✅ [${folder.name}] ${file.name}`);
         } else {
@@ -347,13 +367,23 @@ async function processFolderParallel(
  */
 export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise<SyncStats> {
   const startTime = Date.now();
-  const stats: SyncStats = {
+  
+  // Versuche vorherige Stats zu laden
+  const { loadSyncStats, saveSyncStats } = await import('./store');
+  const previousStats = await loadSyncStats();
+  
+  const stats: SyncStats = previousStats || {
     foldersScanned: 0,
     filesFound: 0,
     filesPosted: 0,
     errors: 0,
     duration: 0,
   };
+  
+  // Setze Startzeit nur wenn neue Session
+  if (!previousStats) {
+    (stats as any).startTime = startTime;
+  }
 
   try {
     console.log('🔄 Starte PARALLELE Synchronisierung...');
@@ -406,6 +436,13 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       });
 
       console.log(`   📊 Batch-Fortschritt: ${stats.filesPosted} von ${stats.filesFound} Dateien gepostet`);
+      
+      // Speichere Stats nach jedem Batch
+      await saveSyncStats({
+        ...stats,
+        lastUpdate: Date.now(),
+        isRunning: true
+      });
     }
 
     stats.duration = Date.now() - startTime;
@@ -418,6 +455,13 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     console.log(`   - Fehler: ${stats.errors}`);
     console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
 
+    // Markiere als abgeschlossen und speichere
+    await saveSyncStats({
+      ...stats,
+      lastUpdate: Date.now(),
+      isRunning: false
+    });
+
     await releaseSyncLock();
     return stats;
 
@@ -425,6 +469,15 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     console.error('❌ Kritischer Fehler:', error);
     stats.errors++;
     stats.duration = Date.now() - startTime;
+    
+    // Speichere Stats im Fehlerfall
+    await saveSyncStats({
+      ...stats,
+      lastUpdate: Date.now(),
+      isRunning: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    
     await releaseSyncLock();
     throw error;
   }

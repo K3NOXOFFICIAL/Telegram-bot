@@ -22,6 +22,10 @@ export class TopicManager {
 
     if (existingMapping) {
       console.log(`Verwende existierendes Topic: ${existingMapping.topicName} (ID: ${existingMapping.topicId})`);
+      
+      // Scanne Topic nach existierenden Dateien
+      await this.scanTopicFiles(existingMapping.topicId);
+      
       return existingMapping.topicId;
     }
 
@@ -43,6 +47,24 @@ export class TopicManager {
     await this.bot.delay(1000);
 
     return topic.message_thread_id;
+  }
+
+  /**
+   * Scannt ein Topic nach existierenden Dateien und speichert sie in Redis
+   */
+  async scanTopicFiles(topicId: number): Promise<void> {
+    try {
+      const { saveTopicFiles } = await import('./store');
+      
+      console.log(`🔍 Scanne Topic ${topicId} nach existierenden Dateien...`);
+      const existingFiles = await this.bot.getTopicFileNames(topicId);
+      
+      if (existingFiles.size > 0) {
+        await saveTopicFiles(topicId, Array.from(existingFiles));
+      }
+    } catch (error) {
+      console.error(`Fehler beim Scannen von Topic ${topicId}:`, error);
+    }
   }
 
   /**

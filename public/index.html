@@ -143,6 +143,14 @@
             color: #666;
             font-size: 0.9em;
         }
+        .stat-running {
+            animation: pulse 2s infinite;
+            border-color: #28a745 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
         .alert {
             padding: 15px;
             border-radius: 10px;
@@ -246,18 +254,73 @@
                         <div class="stat-value">${data.stats.errors || 0}</div>
                     </div>
                 `;
-            } else if (data.state) {
+            if (data.state || data.currentSync) {
                 statsDiv.style.display = 'grid';
-                statsDiv.innerHTML = `
-                    <div class="stat-card">
-                        <div class="stat-label">Posted Files</div>
-                        <div class="stat-value">${data.state.totalPostedFiles || 0}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Topics</div>
-                        <div class="stat-value">${data.state.totalTopicMappings || 0}</div>
-                    </div>
-                `;
+                
+                let statsHTML = '';
+                
+                // Zeige aktuelle Sync-Stats wenn verfügbar
+                if (data.currentSync) {
+                    const isRunning = data.currentSync.isRunning;
+                    const progress = data.currentSync.filesFound > 0 
+                        ? Math.round((data.currentSync.filesPosted / data.currentSync.filesFound) * 100)
+                        : 0;
+                    
+                    statsHTML += `
+                        <div class="stat-card ${isRunning ? 'stat-running' : ''}">
+                            <div class="stat-label">Status</div>
+                            <div class="stat-value">${isRunning ? '🔄 Running' : '✅ Idle'}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Files Uploaded</div>
+                            <div class="stat-value">${data.currentSync.filesPosted || 0} / ${data.currentSync.filesFound || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Progress</div>
+                            <div class="stat-value">${progress}%</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Folders</div>
+                            <div class="stat-value">${data.currentSync.foldersScanned || 0}</div>
+                        </div>
+                    `;
+                }
+                
+                // Zeige Gesamt-Stats
+                if (data.state) {
+                    statsHTML += `
+                        <div class="stat-card">
+                            <div class="stat-label">Total Posted Files</div>
+                            <div class="stat-value">${data.state.totalPostedFiles || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Topics</div>
+                            <div class="stat-value">${data.state.totalTopicMappings || 0}</div>
+                        </div>
+                    `;
+                }
+                
+                statsDiv.innerHTML = statsHTML;
+            }
+        }
+
+        let autoRefreshInterval = null;
+        
+        function startAutoRefresh() {
+            // Aktualisiere Status alle 3 Sekunden
+            if (!autoRefreshInterval) {
+                autoRefreshInterval = setInterval(() => {
+                    checkStatus(true); // Silent mode
+                }, 3000);
+                console.log('🔄 Auto-refresh gestartet');
+            }
+        }
+        
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                console.log('⏸️ Auto-refresh gestoppt');
             }
         }
 
@@ -276,7 +339,8 @@
                 updateStats(data);
                 
                 if (data.success) {
-                    showAlert('✅ Sync completed successfully!', 'success');
+                    showAlert('✅ Sync started! Auto-refreshing status...', 'success');
+                    startAutoRefresh();
                 } else {
                     showAlert('❌ Sync failed: ' + (data.error || 'Unknown error'), 'error');
                 }
@@ -289,49 +353,72 @@
         }
 
         async function stopSync() {
-            showAlert('⏸️ Stopping sync (clearing lock)...', 'info');
-            updateOutput({ status: 'Stopping sync by clearing Redis lock...' }, '⏸️ Stop Sync');
+            const btn = event.target;
+            btn.disabled = true;
+            
+            showAlert('⏸️ Stopping sync...', 'info');
+            updateOutput({ status: 'Stopping sync...' }, '⏸️ Stop Sync');
             
             try {
-                const response = await fetch('/api/clear-redis?token=clear-redis-now');
+                const response = await fetch('/api/stop', { method: 'POST' });
                 const data = await response.json();
                 
                 updateOutput(data, '⏸️ Stop Result');
                 
                 if (data.success) {
-                    showAlert('✅ Sync stopped! Lock cleared.', 'success');
+                    showAlert('✅ Sync stopped! Lock released.', 'success');
+                    stopAutoRefresh();
                 } else {
                     showAlert('❌ Failed to stop sync', 'error');
                 }
             } catch (error) {
                 updateOutput({ error: error.message }, '❌ Error');
                 showAlert('❌ Error: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
             }
         }
 
-        async function checkStatus() {
-            const btn = event.target;
-            btn.disabled = true;
+        async function checkStatus(silent = false) {
+            if (!silent) {
+                const btn = event.target;
+                if (btn) btn.disabled = true;
+            }
             
-            updateOutput({ status: 'Loading status...' }, '📊 Status');
+            if (!silent) {
+                updateOutput({ status: 'Loading status...' }, '📊 Status');
+            }
             
             try {
                 const response = await fetch('/api/status');
                 const data = await response.json();
                 
-                updateOutput(data, '📊 Bot Status');
+                if (!silent) {
+                    updateOutput(data, '📊 Bot Status');
+                }
                 updateStats(data);
                 
-                if (data.healthy) {
+                // Starte Auto-Refresh wenn Sync läuft
+                if (data.currentSync && data.currentSync.isRunning) {
+                    startAutoRefresh();
+                } else if (autoRefreshInterval) {
+                    stopAutoRefresh();
+                }
+                
+                if (!silent && data.healthy) {
                     showAlert('✅ Bot is healthy and running!', 'success');
-                } else {
+                } else if (!silent) {
                     showAlert('⚠️ Bot status check completed', 'info');
                 }
             } catch (error) {
-                updateOutput({ error: error.message }, '❌ Error');
-                showAlert('❌ Error: ' + error.message, 'error');
+                if (!silent) {
+                    updateOutput({ error: error.message }, '❌ Error');
+                    showAlert('❌ Error: ' + error.message, 'error');
+                }
             } finally {
-                btn.disabled = false;
+                if (!silent && event.target) {
+                    event.target.disabled = false;
+                }
             }
         }
 

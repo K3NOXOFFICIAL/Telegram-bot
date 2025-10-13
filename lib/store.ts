@@ -43,7 +43,24 @@ async function initializeStore() {
             return data ? JSON.parse(data) : null;
           },
           set: async (key: string, value: any, options?: any) => {
-            await client.set(key, JSON.stringify(value), options);
+            const serialized = JSON.stringify(value);
+            if (options?.nx && options?.px) {
+              // SET with NX and PX options
+              const result = await client.set(key, serialized, {
+                NX: true,
+                PX: options.px
+              });
+              return result === 'OK';
+            } else if (options?.px) {
+              await client.set(key, serialized, { PX: options.px });
+              return true;
+            } else {
+              await client.set(key, serialized);
+              return true;
+            }
+          },
+          del: async (key: string | string[]) => {
+            await client.del(key);
           },
           _client: client
         };
@@ -123,9 +140,7 @@ export async function isFilePosted(fileId: string): Promise<boolean> {
     if (kvStore) {
       // Versuche direkt aus Redis zu prüfen
       const posted = await kvStore.get(`file:${fileId}`);
-      if (posted) {
-        return true;
-      }
+      return !!posted;
     }
   } catch (error) {
     console.error('Fehler beim Prüfen der Datei in KV:', error);
@@ -182,7 +197,10 @@ export async function getTopicMapping(folderName: string): Promise<TopicMapping 
       // Versuche direkt aus Redis zu laden
       const mapping = await kvStore.get(`topic:${folderName}`);
       if (mapping) {
+        console.log(`✅ Topic-Mapping aus Redis geladen: ${folderName} → ${mapping.topicId}`);
         return mapping as TopicMapping;
+      } else {
+        console.log(`ℹ️  Kein Topic-Mapping in Redis für: ${folderName}`);
       }
     }
   } catch (error) {
@@ -191,7 +209,11 @@ export async function getTopicMapping(folderName: string): Promise<TopicMapping 
   
   // Fallback auf bot_state
   const state = await loadState();
-  return state.topicMappings.find(m => m.folderName === folderName) || null;
+  const fallbackMapping = state.topicMappings.find(m => m.folderName === folderName);
+  if (fallbackMapping) {
+    console.log(`⚠️  Topic-Mapping aus bot_state geladen (Fallback): ${folderName} → ${fallbackMapping.topicId}`);
+  }
+  return fallbackMapping || null;
 }
 
 /**
@@ -236,6 +258,82 @@ export async function saveTopicMapping(
 export async function getAllTopicMappings(): Promise<TopicMapping[]> {
   const state = await loadState();
   return state.topicMappings;
+}
+
+/**
+ * Speichert die aktuellen Sync-Stats in Redis
+ */
+export async function saveSyncStats(stats: any): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      await kvStore.set('sync_stats', stats);
+    }
+  } catch (error) {
+    console.error('Fehler beim Speichern der Sync-Stats:', error);
+  }
+}
+
+/**
+ * Lädt die aktuellen Sync-Stats aus Redis
+ */
+export async function loadSyncStats(): Promise<any | null> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      return await kvStore.get('sync_stats');
+    }
+  } catch (error) {
+    console.error('Fehler beim Laden der Sync-Stats:', error);
+  }
+  
+  return null;
+}
+
+/**
+ * Speichert die Liste der Dateien, die bereits im Topic existieren
+ */
+export async function saveTopicFiles(topicId: number, fileNames: string[]): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      await kvStore.set(`topic_files:${topicId}`, fileNames);
+      console.log(`✅ ${fileNames.length} Dateien für Topic ${topicId} gespeichert`);
+    }
+  } catch (error) {
+    console.error('Fehler beim Speichern der Topic-Dateien:', error);
+  }
+}
+
+/**
+ * Lädt die Liste der Dateien, die bereits im Topic existieren
+ */
+export async function loadTopicFiles(topicId: number): Promise<Set<string>> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      const files = await kvStore.get(`topic_files:${topicId}`);
+      if (files && Array.isArray(files)) {
+        return new Set(files);
+      }
+    }
+  } catch (error) {
+    console.error('Fehler beim Laden der Topic-Dateien:', error);
+  }
+  
+  return new Set();
+}
+
+/**
+ * Prüft ob eine Datei bereits im Topic existiert (anhand des Dateinamens)
+ */
+export async function isFileInTopic(topicId: number, fileName: string): Promise<boolean> {
+  const topicFiles = await loadTopicFiles(topicId);
+  return topicFiles.has(fileName);
 }
 
 /**
@@ -291,30 +389,21 @@ export async function acquireSyncLock(): Promise<boolean> {
 
   try {
     const lockKey = 'sync_lock';
-    const existingLock = await kvStore.get(lockKey);
+    const timestamp = Date.now().toString();
     
-    if (existingLock) {
-      const lockTime = new Date(existingLock.timestamp);
-      const now = new Date();
-      const diffMinutes = (now.getTime() - lockTime.getTime()) / 1000 / 60;
-      
-      // Lock ist älter als 30 Minuten? Wahrscheinlich crashed - überschreiben
-      if (diffMinutes > 30) {
-        console.log('🔓 Alter Lock gefunden (>30min) - überschreibe');
-      } else {
-        console.log(`🔒 Sync läuft bereits (seit ${Math.round(diffMinutes)}min) - überspringe`);
-        return false;
-      }
-    }
-    
-    // Setze neuen Lock
-    await kvStore.set(lockKey, {
-      timestamp: new Date().toISOString(),
-      deployment: process.env.VERCEL_DEPLOYMENT_ID || 'local'
+    // Versuche Lock zu setzen mit NX (only if not exists) und PX (expire in milliseconds)
+    const result = await kvStore.set(lockKey, timestamp, {
+      nx: true,  // Nur setzen wenn Key nicht existiert
+      px: 1800000  // Expire nach 30 Minuten (in milliseconds)
     });
     
-    console.log('🔒 Sync-Lock erhalten');
-    return true;
+    if (result) {
+      console.log('🔒 Sync-Lock erhalten');
+      return true;
+    }
+    
+    console.log('⏸️  Sync läuft bereits - überspringe');
+    return false;
   } catch (error) {
     console.error('Fehler beim Lock-Handling:', error);
     return true; // Im Fehlerfall trotzdem ausführen
@@ -333,19 +422,7 @@ export async function releaseSyncLock(): Promise<void> {
 
   try {
     const lockKey = 'sync_lock';
-    
-    // Erstelle einen Redis-Client mit DEL-Unterstützung
-    if (process.env.REDIS_URL) {
-      const { createClient } = require('redis');
-      const client = createClient({ url: process.env.REDIS_URL });
-      await client.connect();
-      await client.del(lockKey);
-      await client.disconnect();
-    } else {
-      // Vercel KV - setze auf null mit kurzer TTL
-      await kvStore.set(lockKey, null);
-    }
-    
+    await kvStore.del(lockKey);
     console.log('🔓 Sync-Lock freigegeben');
   } catch (error) {
     console.error('Fehler beim Lock-Release:', error);
