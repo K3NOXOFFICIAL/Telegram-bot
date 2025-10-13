@@ -360,7 +360,6 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     
     const lockAcquired = await acquireSyncLock();
     if (!lockAcquired) {
-      const lockInfo = await getSyncLockInfo();
       console.log(`⏸️  Synchronisierung läuft bereits - überspringe`);
       stats.duration = Date.now() - startTime;
       return stats;
@@ -429,21 +428,4 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     await releaseSyncLock();
     throw error;
   }
-}
-
-// Helper-Funktion für Lock-Info
-async function getSyncLockInfo(): Promise<{ isLocked: boolean; since?: number }> {
-  try {
-    const { getRedisClient } = await import('./store');
-    const redis = await getRedisClient();
-    if (redis) {
-      const lockTime = await redis.get('sync_lock');
-      if (lockTime) {
-        return { isLocked: true, since: parseInt(lockTime) };
-      }
-    }
-  } catch (error) {
-    console.error('Fehler beim Abrufen der Lock-Info:', error);
-  }
-  return { isLocked: false };
 }

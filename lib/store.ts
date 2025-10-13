@@ -42,9 +42,10 @@ async function initializeStore() {
             const data = await client.get(key);
             return data ? JSON.parse(data) : null;
           },
-          set: async (key: string, value: any) => {
-            await client.set(key, JSON.stringify(value));
-          }
+          set: async (key: string, value: any, options?: any) => {
+            await client.set(key, JSON.stringify(value), options);
+          },
+          _client: client
         };
         storeInitialized = true;
         return;
@@ -116,6 +117,21 @@ export async function saveState(state: BotState): Promise<void> {
  * Prüft, ob eine Datei bereits gepostet wurde
  */
 export async function isFilePosted(fileId: string): Promise<boolean> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      // Versuche direkt aus Redis zu prüfen
+      const posted = await kvStore.get(`file:${fileId}`);
+      if (posted) {
+        return true;
+      }
+    }
+  } catch (error) {
+    console.error('Fehler beim Prüfen der Datei in KV:', error);
+  }
+  
+  // Fallback auf bot_state
   const state = await loadState();
   return state.postedFiles.some(f => f.fileId === fileId);
 }
@@ -129,8 +145,8 @@ export async function markFileAsPosted(
   folderName: string,
   messageId: number
 ): Promise<void> {
-  const state = await loadState();
-
+  await initializeStore();
+  
   const postedFile: PostedFile = {
     fileId,
     fileName,
@@ -139,9 +155,19 @@ export async function markFileAsPosted(
     postedAt: new Date().toISOString(),
   };
 
+  try {
+    if (kvStore) {
+      // Speichere direkt in Redis mit separatem Key
+      await kvStore.set(`file:${fileId}`, postedFile);
+    }
+  } catch (error) {
+    console.error('Fehler beim Markieren der Datei in KV:', error);
+  }
+
+  // Auch im bot_state speichern (Fallback)
+  const state = await loadState();
   state.postedFiles.push(postedFile);
   state.lastSync = new Date().toISOString();
-
   await saveState(state);
 }
 
@@ -149,6 +175,21 @@ export async function markFileAsPosted(
  * Holt das Topic-Mapping für einen Ordner
  */
 export async function getTopicMapping(folderName: string): Promise<TopicMapping | null> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      // Versuche direkt aus Redis zu laden
+      const mapping = await kvStore.get(`topic:${folderName}`);
+      if (mapping) {
+        return mapping as TopicMapping;
+      }
+    }
+  } catch (error) {
+    console.error('Fehler beim Laden des Topic-Mappings aus KV:', error);
+  }
+  
+  // Fallback auf bot_state
   const state = await loadState();
   return state.topicMappings.find(m => m.folderName === folderName) || null;
 }
@@ -161,13 +202,8 @@ export async function saveTopicMapping(
   topicId: number,
   topicName: string
 ): Promise<void> {
-  const state = await loadState();
-
-  // Entferne altes Mapping, falls vorhanden
-  state.topicMappings = state.topicMappings.filter(
-    m => m.folderName !== folderName
-  );
-
+  await initializeStore();
+  
   const mapping: TopicMapping = {
     folderName,
     topicId,
@@ -175,8 +211,22 @@ export async function saveTopicMapping(
     createdAt: new Date().toISOString(),
   };
 
-  state.topicMappings.push(mapping);
+  try {
+    if (kvStore) {
+      // Speichere direkt in Redis mit separatem Key
+      await kvStore.set(`topic:${folderName}`, mapping);
+      console.log(`✅ Topic-Mapping gespeichert: ${folderName} → Topic ${topicId}`);
+    }
+  } catch (error) {
+    console.error('Fehler beim Speichern des Topic-Mappings in KV:', error);
+  }
 
+  // Auch im bot_state speichern (Fallback)
+  const state = await loadState();
+  state.topicMappings = state.topicMappings.filter(
+    m => m.folderName !== folderName
+  );
+  state.topicMappings.push(mapping);
   await saveState(state);
 }
 
