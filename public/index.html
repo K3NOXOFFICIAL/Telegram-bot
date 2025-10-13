@@ -275,7 +275,7 @@
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">Total Topics</div>
-                            <div class="stat-value">${data.state.totalTopicMappings || 0}</div>
+                            <div class="stat-value">${data.topics ? data.topics.length : (data.state.totalTopicMappings || 0)}</div>
                         </div>
                     `;
                 }
