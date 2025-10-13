@@ -76,6 +76,40 @@ export class OneDriveClient {
   }
 
   /**
+   * Macht einen Graph API Call mit Paginierung (alle Results)
+   */
+  private async graphApiCallPaginated<T extends { value: any[]; '@odata.nextLink'?: string }>(
+    endpoint: string
+  ): Promise<any[]> {
+    const token = await this.getAccessToken();
+    const allItems: any[] = [];
+    let nextLink: string | undefined = `https://graph.microsoft.com/v1.0${endpoint}`;
+
+    try {
+      while (nextLink) {
+        const response: { data: T } = await axios.get<T>(nextLink, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        allItems.push(...response.data.value);
+        nextLink = response.data['@odata.nextLink'];
+
+        // Kurze Pause zwischen Requests um Rate Limits zu vermeiden
+        if (nextLink) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      return allItems;
+    } catch (error: any) {
+      console.error('Graph API Fehler (Paginiert):', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Erstellt den richtigen API-Endpunkt basierend auf SharePoint oder OneDrive
    */
   private getDriveEndpoint(path: string, action: 'children' | 'item' = 'children'): string {
@@ -105,10 +139,10 @@ export class OneDriveClient {
     try {
       const endpoint = this.getDriveEndpoint(folderPath, 'children');
 
-      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+      const items = await this.graphApiCallPaginated<{ value: OneDriveItem[]; '@odata.nextLink'?: string }>(endpoint);
 
       // Filtere nur Ordner
-      const folders: OneDriveFolder[] = response.value
+      const folders: OneDriveFolder[] = items
         .filter(item => item.folder)
         .map(item => ({
           id: item.id,
@@ -127,16 +161,16 @@ export class OneDriveClient {
   }
 
   /**
-   * Listet alle Dateien in einem Ordner auf
+   * Listet alle Dateien in einem Ordner auf (mit Paginierung)
    */
   async listFilesInFolder(folderPath: string): Promise<OneDriveItem[]> {
     try {
       const endpoint = this.getDriveEndpoint(folderPath, 'children');
 
-      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+      const items = await this.graphApiCallPaginated<{ value: OneDriveItem[]; '@odata.nextLink'?: string }>(endpoint);
 
       // Filtere nur Dateien (keine Ordner)
-      return response.value.filter(item => item.file);
+      return items.filter(item => item.file);
     } catch (error: any) {
       if (error.response?.status === 404) {
         console.warn(`Ordner nicht gefunden: ${folderPath}`);
@@ -162,7 +196,7 @@ export class OneDriveClient {
   }
 
   /**
-   * Hilfsfunktion für rekursives Durchsuchen
+   * Hilfsfunktion für rekursives Durchsuchen mit Paginierung
    */
   private async listFilesRecursiveHelper(
     folderPath: string,
@@ -176,9 +210,9 @@ export class OneDriveClient {
 
     try {
       const endpoint = this.getDriveEndpoint(folderPath, 'children');
-      const response = await this.graphApiCall<{ value: OneDriveItem[] }>(endpoint);
+      const items = await this.graphApiCallPaginated<{ value: OneDriveItem[]; '@odata.nextLink'?: string }>(endpoint);
 
-      for (const item of response.value) {
+      for (const item of items) {
         if (item.file) {
           // Es ist eine Datei, füge sie hinzu
           allFiles.push(item);
