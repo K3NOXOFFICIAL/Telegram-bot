@@ -45,7 +45,7 @@ export class OneDriveClient {
       // Token läuft in ca. 1 Stunde ab, wir setzen Ablauf auf 55 Minuten
       this.tokenExpiry = Date.now() + 55 * 60 * 1000;
 
-      return this.accessToken;
+      return this.accessToken || '';
     } catch (error: any) {
       console.error('Fehler beim Abrufen des Access Tokens:', error.response?.data || error.message);
       throw new Error('Konnte kein Access Token erhalten');

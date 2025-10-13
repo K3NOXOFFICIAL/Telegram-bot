@@ -31,9 +31,9 @@ try {
 export async function loadState(): Promise<BotState> {
   try {
     if (kvStore) {
-      const state = await kvStore.get<BotState>('bot_state');
+      const state = await kvStore.get('bot_state');
       if (state) {
-        return state;
+        return state as BotState;
       }
     }
   } catch (error) {
