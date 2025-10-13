@@ -286,9 +286,69 @@ export async function saveTopicMapping(
 }
 
 /**
- * Holt alle Topic-Mappings
+ * Holt alle Topic-Mappings aus Redis (primär) oder bot_state (fallback)
  */
 export async function getAllTopicMappings(): Promise<TopicMapping[]> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      // Versuche alle topic:* Keys aus Redis zu laden
+      let topicKeys: string[] = [];
+      
+      // Redis mit _client (Standard Redis)
+      if (kvStore._client) {
+        try {
+          topicKeys = await kvStore._client.keys('topic:*');
+        } catch (error) {
+          console.warn('⚠️  Redis KEYS Befehl fehlgeschlagen, nutze SCAN:', error);
+          // Fallback: SCAN (sicherer für große Datenmengen)
+          const keys: string[] = [];
+          let cursor = '0';
+          do {
+            const result = await kvStore._client.scan(cursor, {
+              MATCH: 'topic:*',
+              COUNT: 100
+            });
+            cursor = result.cursor;
+            keys.push(...result.keys);
+          } while (cursor !== '0');
+          topicKeys = keys;
+        }
+      } 
+      // Vercel KV
+      else if (kvStore.keys) {
+        topicKeys = await kvStore.keys('topic:*');
+      }
+      
+      if (topicKeys.length > 0) {
+        // Lade alle Topic-Mappings parallel
+        const mappings = await Promise.all(
+          topicKeys.map(async (key) => {
+            try {
+              const mapping = await kvStore.get(key);
+              return mapping as TopicMapping;
+            } catch (error) {
+              console.error(`Fehler beim Laden von ${key}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // Filtere null-Werte und sortiere nach createdAt
+        const validMappings = mappings.filter(m => m !== null) as TopicMapping[];
+        console.log(`📊 ${validMappings.length} Topic-Mappings aus Redis geladen`);
+        return validMappings.sort((a, b) => 
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Fehler beim Laden der Topic-Mappings aus Redis:', error);
+  }
+  
+  // Fallback: Aus bot_state laden
+  console.log('⚠️  Fallback: Lade Topic-Mappings aus bot_state');
   const state = await loadState();
   return state.topicMappings;
 }

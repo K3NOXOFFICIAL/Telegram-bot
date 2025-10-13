@@ -12,7 +12,9 @@ Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) au
 - ✅ **Intelligente Topic-Verwaltung**: Merged existierende Dateien beim Scannen statt zu überschreiben
 - ✅ **Konsistenz-Sicherung**: Speichert Daten sowohl in Redis als auch im Fallback-Store
 - ✅ Rate-Limiting mit automatischem Retry bei Telegram API Limits
-- ✅ **Parallele Verarbeitung**: Verarbeitet mehrere Ordner gleichzeitig (bis zu 2 parallel)
+- ✅ **Parallele Verarbeitung**: Verarbeitet mehrere Ordner gleichzeitig (bis zu 6 parallel)
+- ✅ **Optimierte Upload-Geschwindigkeit**: Bis zu 7.200 Dateien/Stunde mit Telegram Limits
+- ✅ **Chunked Processing**: Automatische Fortsetzung bei langen Syncs (5-6 Stunden)
 - ✅ Automatische Synchronisierung alle 5 Minuten (Cron-Job)
 - ✅ Vercel-kompatibel mit Serverless Functions
 - ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
@@ -349,49 +351,89 @@ telegram-onedrive-bot/
 2. "Grant admin consent" im Azure Portal klicken
 3. Client Secret könnte abgelaufen sein (max. 24 Monate)
 
-### Rate Limiting
+### Rate Limiting & Performance
 
-Telegram erlaubt ca. 20-30 Nachrichten pro Sekunde pro Gruppe. Bei großen Mengen:
+**Telegram Bot API Limits:**
+- **20 messages/minute pro Topic** (kritisches Limit)
+- **30 messages/second gesamt** (über alle Topics hinweg)
 
-```env
-RATE_LIMIT_DELAY=3000  # 3 Sekunden zwischen Posts
+**Aktuelle Optimierung:**
+- ✅ **6 parallele Topics** - Nutzt nur 6.7% der globalen Kapazität
+- ✅ **3 Sekunden Delay** - Genau am 20 msg/min Limit pro Topic
+- ✅ **Performance: 7.200 Dateien/Stunde** - 6x schneller als sequenziell
+
+**Berechnung:**
 ```
+6 Topics × 20 msg/min = 120 msg/min gesamt
+= 2 msg/sec durchschnittlich ✅ (Limit: 30 msg/sec)
+= Sehr sicherer Bereich, keine Rate Limits!
+```
+
+**Beispiel-Performance:**
+```
+1.000 Dateien → ~8 Minuten
+10.000 Dateien → ~1.4 Stunden
+20.000 Dateien → ~2.8 Stunden
+```
+
+**📖 Siehe:** [TELEGRAM_LIMITS_OPTIMIZATION.md](./TELEGRAM_LIMITS_OPTIMIZATION.md) für Details
 
 ### Vercel Timeout / Function Max Duration
 
 **Problem:** "Function invocation timed out" oder "504 Gateway Timeout"
 
-**Ursache:** Synchronisierung dauert länger als erlaubte Function-Dauer
+**Ursache:** Synchronisierung dauert länger als erlaubte Function-Dauer (300s / 5 Min)
 
-**Lösung:**
+**✅ Lösung: Chunked Processing (bereits implementiert!)**
 
-Die `vercel.json` ist bereits konfiguriert für **300 Sekunden (5 Minuten)**:
+Der Bot nutzt **automatisches Chunked Processing**:
+- Verarbeitet in 4-Minuten-Chunks (unter 5-Min-Limit)
+- Setzt automatisch fort nach 2 Sekunden Pause
+- Kann beliebig lange Syncs (5-6 Stunden) durchführen
+
+**Konfiguration in vercel.json:**
 ```json
 {
   "functions": {
-    "api/sync.ts": { "maxDuration": 300 }
+    "api/sync.ts": { "maxDuration": 300 },  // 5 Minuten
+    "api/status.ts": { "maxDuration": 60 }   // 1 Minute
   }
 }
 ```
 
-**Erfordert Vercel Pro Plan!**
+**Status während langer Syncs:**
+```powershell
+# Zeigt aktuellen Fortschritt
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/status" | ConvertFrom-Json
 
-**Bei weiterhin Timeouts:**
+# Beispiel-Output:
+# "syncProgress": {
+#   "currentFolder": 15,
+#   "totalFolders": 42,
+#   "percentComplete": 35.7
+# }
+```
 
-1. **Optimiere Parallelität:**
+**Bei Problemen:**
+
+1. **Lock hängt?** Manuelles Release:
+   ```powershell
+   Invoke-WebRequest -Uri "https://your-project.vercel.app/api/release-lock" -Method POST
+   ```
+
+2. **Optimierung anpassen:**
    ```typescript
    // In lib/sync.ts
-   const CONCURRENT = 4; // Mehr Ordner parallel (Standard: 3)
+   const CONCURRENT = 6;        // Mehr parallel = schneller
+   const MAX_EXECUTION_TIME = 4 * 60 * 1000;  // 4 Min pro Chunk
    ```
 
-2. **Reduziere Rate-Limit-Delay:**
-   ```env
-   RATE_LIMIT_DELAY=1500  # Schneller (Standard: 2000)
-   ```
+**Erfordert Vercel Pro Plan!**
 
-3. **Upgrade zu Enterprise Plan** (bis 900s)
-
-**Siehe:** [VERCEL_TIMEOUT.md](./VERCEL_TIMEOUT.md) für Details
+**📖 Siehe:**
+- [VERCEL_TIMEOUT.md](./VERCEL_TIMEOUT.md) - Timeout Details
+- [CHUNKED_PROCESSING.md](./CHUNKED_PROCESSING.md) - Wie Chunking funktioniert
+- [LOCK_PROBLEM.md](./LOCK_PROBLEM.md) - Lock-Probleme beheben
 
 ## 📚 Weitere Ressourcen
 
