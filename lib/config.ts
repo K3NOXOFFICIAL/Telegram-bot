@@ -16,7 +16,7 @@ export function loadConfig(): BotConfig {
     microsoftClientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
     microsoftTenantId: process.env.MICROSOFT_TENANT_ID || '',
     onedriveFolderPath: process.env.ONEDRIVE_FOLDER_PATH || '/Fotos',
-    rateLimitDelay: parseInt(process.env.RATE_LIMIT_DELAY || '1000', 10), // Sicher: 1s zwischen Posts
+    rateLimitDelay: parseInt(process.env.RATE_LIMIT_DELAY || '1000', 10), // Fast: 1s (overhead prevents 429)
     sharepointSiteId: process.env.SHAREPOINT_SITE_ID,
     sharepointDriveId: process.env.SHAREPOINT_DRIVE_ID,
   };

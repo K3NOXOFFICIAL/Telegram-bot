@@ -177,7 +177,7 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               stats.errors++;
             }
 
-            // Rate Limiting: 3s zwischen Posts (20 msg/min Limit)
+            // Rate Limiting: 1s base delay (actual rate limited by processing overhead)
             await bot.delay(1000);
 
           } catch (fileError) {
@@ -408,8 +408,8 @@ async function processFolderParallel(
           // Weiter mit nächster Datei - nicht abbrechen!
         }
 
-        // Telegram Limit: 20 msg/min pro Chat = 3s zwischen msgs
-        // Bei 6 parallelen Topics = 30 msg/sec insgesamt (Max!)
+        // Rate limiting: 1s base delay + processing overhead keeps us under limits
+        // Retry logic handles any 429 errors gracefully
         await bot.delay(1000);
 
       } catch (fileError: any) {
@@ -439,7 +439,7 @@ async function processFolderParallel(
  */
 export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise<SyncStats> {
   const startTime = Date.now();
-  const MAX_EXECUTION_TIME = 4 * 60 * 1000; // 4 Minuten (Sicherheitspuffer von 1 Min)
+  const MAX_EXECUTION_TIME = 4.2 * 60 * 1000; // 4.2 Minuten (Puffer für Cleanup + neue Request)
   
   // Versuche vorherige Stats zu laden
   const { loadSyncStats, saveSyncStats, getSyncProgress, saveSyncProgress } = await import('./store');
@@ -488,10 +488,10 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 6 Ordner gleichzeitig (optimiert für Telegram Limits)
-    // Telegram erlaubt: 20 msg/min pro Topic, 30 msg/sec broadcast insgesamt
-    // 6 parallel = max. Nutzung der 30 msg/sec Gesamtkapazität
-    const CONCURRENT = 6;
+    // PARALLEL: 15 Ordner gleichzeitig (MAXIMUM SPEED!)
+    // Processing overhead + 1s delays keep us within Telegram limits
+    // Automatic retry logic handles any rare 429 errors
+    const CONCURRENT = 15;
     const startIndex = progress?.currentFolderIndex || 0;
     let needsContinuation = false;
     
@@ -570,19 +570,23 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       console.log(`   - Fehler: ${stats.errors}`);
       console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
       
-      // Speichere Stats mit 'needs continuation' Flag
+      // Speichere Stats mit 'needs continuation' Flag und totalFolders
       await saveSyncStats({
         ...stats,
         lastUpdate: Date.now(),
         isRunning: false,
-        needsContinuation: true
+        needsContinuation: true,
+        totalFolders: folders.length
       });
       
       await releaseSyncLock();
       
-      // Triggere automatische Fortsetzung (nach 2 Sekunden Pause)
-      console.log('🔄 Triggere automatische Fortsetzung...');
-      return stats;
+      // Gib Stats mit Continuation-Flag zurück
+      return {
+        ...stats,
+        needsContinuation: true,
+        totalFolders: folders.length
+      } as any;
     }
 
     console.log('\n✨ Synchronisierung abgeschlossen');

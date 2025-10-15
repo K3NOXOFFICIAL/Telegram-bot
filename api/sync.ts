@@ -58,36 +58,44 @@ export default async function handler(
     if ((stats as any).needsContinuation) {
       console.log('🔄 Sync benötigt Fortsetzung - triggere neuen Request...');
       
-      // Starte asynchron einen neuen Sync-Request nach kurzer Pause
-      setTimeout(async () => {
-        try {
-          console.log('▶️  Auto-Continue: Starte nächsten Chunk...');
-          const baseUrl = `https://${req.headers.host}`;
-          const continueUrl = `${baseUrl}/api/sync`;
-          
-          // Mache einen Request zu uns selbst
-          const response = await fetch(continueUrl, {
-            method: 'POST',
-            headers: {
-              'x-auth-token': authToken as string || ''
-            }
-          });
-          
-          if (response.ok) {
-            console.log('✅ Auto-Continue erfolgreich gestartet');
-          } else {
-            console.error('❌ Auto-Continue fehlgeschlagen:', response.status);
+      // Triggere SOFORT einen neuen Request über /api/continue-sync
+      // Dies ist kritisch für Vercel Serverless - setTimeout funktioniert nicht!
+      try {
+        const baseUrl = `https://${req.headers.host}`;
+        const continueUrl = `${baseUrl}/api/continue-sync`;
+        
+        console.log('▶️  Auto-Continue: Starte nächsten Chunk sofort...');
+        
+        // Fire-and-forget Request - warte NICHT auf Response
+        fetch(continueUrl, {
+          method: 'POST',
+          headers: {
+            'x-auth-token': (authToken as string) || '',
+            'Content-Type': 'application/json'
           }
-        } catch (error) {
-          console.error('❌ Fehler bei Auto-Continue:', error);
-        }
-      }, 2000); // 2 Sekunden Pause
+        }).catch(error => {
+          // Log error but don't block
+          console.error('❌ Auto-Continue Request fehlgeschlagen:', error);
+        });
+        
+        console.log('✅ Auto-Continue Request gesendet');
+        
+      } catch (error) {
+        console.error('❌ Fehler bei Auto-Continue Trigger:', error);
+      }
       
       return res.status(202).json({
         success: true,
         stats,
-        message: 'Sync läuft weiter - wird automatisch fortgesetzt',
+        message: 'Sync Chunk abgeschlossen - wird automatisch fortgesetzt',
         needsContinuation: true,
+        progress: {
+          currentFolder: (stats as any).foldersScanned,
+          totalFolders: (stats as any).totalFolders || 0,
+          percentComplete: (stats as any).totalFolders 
+            ? Math.round(((stats as any).foldersScanned / (stats as any).totalFolders) * 100)
+            : 0
+        },
         timestamp: new Date().toISOString(),
       });
     }

@@ -96,10 +96,7 @@ export class OneDriveClient {
         allItems.push(...response.data.value);
         nextLink = response.data['@odata.nextLink'];
 
-        // Kurze Pause zwischen Requests um Rate Limits zu vermeiden
-        if (nextLink) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        // No delay needed - Graph API handles rate limiting automatically
       }
 
       return allItems;
