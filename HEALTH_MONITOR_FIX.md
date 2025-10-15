@@ -100,6 +100,41 @@ if (syncStats && (syncStats as any).isRunning) {
 - Detailed logging
 - Graceful handling of timeout/abort cases
 
+### 6. Smart Continuation Logic ✅
+
+**NEW: Intelligent recovery that preserves progress!**
+
+**Before:**
+- Always started new sync on recovery
+- Lost all progress from interrupted syncs
+- Wasted time re-processing completed folders
+
+**After:**
+```typescript
+// Check for saved progress
+if (syncProgress && syncProgress.currentFolderIndex !== undefined) {
+  console.log(`📍 Unvollständiger Sync erkannt - triggere Continuation ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+  await triggerContinueSync(req);
+  result.actions.push(`Sync-Fortsetzung getriggert ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+} else {
+  // No progress - start fresh
+  await triggerSync(req);
+  result.actions.push('Neuer Sync wurde getriggert');
+}
+```
+
+**Four Recovery Modes:**
+1. **Stale Lock + Progress** → Continue from saved position
+2. **Stalled Sync + Progress** → Resume from last checkpoint  
+3. **Orphaned Progress (no lock)** → Auto-continue unfinished work
+4. **No Progress** → Start fresh sync
+
+**Benefits:**
+- ✅ Never lose progress on interruption
+- ✅ Automatic resume after crashes
+- ✅ Efficient recovery (skip already-processed folders)
+- ✅ Smart detection of continuation vs. fresh start
+
 ## How It Works Now
 
 ### Regular Operation
@@ -109,40 +144,87 @@ if (syncStats && (syncStats as any).isRunning) {
    - Stale locks (>10 min)
    - Missing progress with lock (>5 min)
    - Stalled syncs (no update in 15 min)
+   - **Orphaned progress** (saved progress but no lock)
+
+### Smart Recovery with Continuation
+
+The health monitor now intelligently determines whether to **continue** an interrupted sync or **start fresh**:
+
+**Check #1: Lock Age**
+- If lock > 10 minutes old:
+  - Release lock
+  - Check for saved progress
+  - **If progress exists:** Continue from checkpoint → `/api/continue-sync`
+  - **If no progress:** Start fresh → `/api/sync`
+
+**Check #2: Stalled Sync**  
+- If sync running but no update in 15 minutes:
+  - Release lock
+  - Check for saved progress
+  - **If progress exists:** Resume from last position → `/api/continue-sync`
+  - **If no progress:** Start fresh → `/api/sync`
+
+**Check #3: Orphaned Progress**
+- If saved progress exists but no lock:
+  - This indicates a crash or improper shutdown
+  - Automatically trigger continuation → `/api/continue-sync`
+  - No data loss!
+
+**Check #4: Everything OK**
+- All checks pass
+- Return healthy status
+- No action needed
 
 ### Recovery Scenarios
 
-#### Scenario 1: Stale Lock
+#### Scenario 1: Stale Lock with Saved Progress
 ```
 🏥 Health Monitor detects:
   - Lock is 12 minutes old (max: 10)
+  - Saved progress exists: Folder 5/10
   
 🔧 Auto-Recovery:
   1. Release old lock
-  2. Trigger new sync
+  2. Trigger continuation from Folder 5
   
 ✅ Response: HTTP 200 (success!)
    systemHealthy: false
    issues: ["Sync Lock ist 12 Minuten alt"]
-   actions: ["Alter Sync Lock wurde automatisch gelöst", "Neuer Sync wurde getriggert"]
+   actions: ["Alter Sync Lock wurde automatisch gelöst", "Sync-Fortsetzung getriggert ab Ordner 6"]
 ```
 
-#### Scenario 2: Stalled Sync
+#### Scenario 2: Stalled Sync with Progress
 ```
 🏥 Health Monitor detects:
   - Sync running but no update in 16 minutes (max: 15)
+  - Progress saved: Folder 8/15
   
 🔧 Auto-Recovery:
   1. Release lock
-  2. Force restart sync
+  2. Continue from Folder 8
   
 ✅ Response: HTTP 200 (success!)
    systemHealthy: false
    issues: ["Sync läuft aber kein Update seit 16 Minuten"]
-   actions: ["Hängender Sync wurde force-restarted"]
+   actions: ["Hängender Sync wurde fortgesetzt ab Ordner 9"]
 ```
 
-#### Scenario 3: Everything Healthy
+#### Scenario 3: Unfinished Sync (No Lock)
+```
+🏥 Health Monitor detects:
+  - No active lock
+  - But saved progress exists: Folder 12/20
+  
+🔧 Auto-Recovery:
+  1. Trigger continuation from Folder 12
+  
+✅ Response: HTTP 200 (success!)
+   systemHealthy: false
+   issues: ["Unvollständiger Sync gefunden (Ordner 13/20)"]
+   actions: ["Unvollständiger Sync wird fortgesetzt ab Ordner 13"]
+```
+
+#### Scenario 4: Everything Healthy
 ```
 🏥 Health Monitor checks:
   - Lock status: OK

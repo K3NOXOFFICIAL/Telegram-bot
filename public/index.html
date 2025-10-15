@@ -100,6 +100,10 @@
             background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
             color: white;
         }
+        .btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
         .status-display {
             background: white;
             border: 2px solid #e0e0e0;
@@ -254,6 +258,12 @@
                     </button>
                     <button class="btn-clear" onclick="clearRedis()">
                         🗑️ Clear Redis
+                    </button>
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-warning" onclick="markAllUploaded()">
+                        ✅ Mark All as Uploaded
                     </button>
                 </div>
                 
@@ -557,6 +567,42 @@
                     document.getElementById('stats').style.display = 'none';
                 } else {
                     showAlert('❌ Failed to clear Redis', 'error');
+                }
+            } catch (error) {
+                updateOutput({ error: error.message }, '❌ Error');
+                showAlert('❌ Error: ' + error.message, 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function markAllUploaded(event) {
+            if (!confirm('⚠️ This will mark ALL files in OneDrive as already uploaded. They will NOT be posted to Telegram. Continue?')) {
+                return;
+            }
+            
+            const btn = event?.target;
+            if (btn) btn.disabled = true;
+            
+            showAlert('✅ Marking all files as uploaded...', 'info');
+            updateOutput({ status: 'Scanning OneDrive and marking files...' }, '✅ Mark All Uploaded');
+            
+            try {
+                const response = await fetch('/api/mark-all-uploaded', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                updateOutput(data, '✅ Mark All Uploaded Result');
+                
+                if (data.success) {
+                    const stats = data.stats;
+                    showAlert(
+                        `✅ Success! Marked ${stats.filesNewlyMarked} new files (${stats.filesAlreadyMarked} already marked, ${stats.filesFound} total)`,
+                        'success'
+                    );
+                } else {
+                    showAlert('❌ Failed to mark files: ' + (data.message || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 updateOutput({ error: error.message }, '❌ Error');

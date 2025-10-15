@@ -1,12 +1,41 @@
 # Changelog - Duplikat-Vermeidung und Store-Konsistenz Fixes
 
-**Datum:** 13. Oktober 2025
+**Letzte Aktualisierung:** 15. Oktober 2025
 
-## 🎯 Überblick
+## � Neue Features (15. Oktober 2025)
 
-Umfangreiche Überarbeitung des Upload- und Speichersystems zur Vermeidung von Duplikaten und Sicherstellung der Datenkonsistenz.
+### Mark All Files as Uploaded
 
-## 🐛 Behobene Probleme
+**Feature:** Möglichkeit, alle Dateien in OneDrive-Ordnern als bereits hochgeladen zu markieren
+
+**Neue Dateien:**
+- `api/mark-all-uploaded.ts` - API Endpoint
+- `scripts/mark-all-uploaded.ts` - CLI Script
+- `MARK_ALL_UPLOADED.md` - Vollständige Dokumentation
+
+**Verwendung:**
+```powershell
+# Via Web API
+Invoke-WebRequest -Uri "/api/mark-all-uploaded" -Method POST
+
+# Via NPM Script (lokal)
+npm run mark-all-uploaded
+
+# Via Web Interface
+# Klick auf "✅ Mark All as Uploaded" Button
+```
+
+**Use Cases:**
+- ✅ Erste Einrichtung mit existierenden OneDrive-Dateien
+- ✅ Nach Redis-Reset zur Vermeidung von Duplikaten
+- ✅ Migration von anderen Systemen
+- ✅ Selektives Posting vorbereiten
+
+**Siehe:** [MARK_ALL_UPLOADED.md](./MARK_ALL_UPLOADED.md)
+
+---
+
+## 🐛 Behobene Probleme (13. Oktober 2025)
 
 ### 1. **Doppelte Upload-Prüfung in normaler Sync-Funktion fehlte**
 - **Problem:** `syncOneDriveToTelegram()` prüfte nur Redis File-ID, nicht aber ob Datei bereits im Topic existiert

@@ -124,13 +124,24 @@ Folge den Anweisungen und wähle:
 
 **WICHTIG:** Ohne Redis werden Topic-Mappings nicht persistent gespeichert und Topics werden bei jedem Neustart doppelt erstellt!
 
-**Option A: Redis Cloud (empfohlen)**
+**Option A: Upstash Redis (EMPFOHLEN - 10,000 commands/day free)**
+1. Erstelle kostenlosen Account auf [upstash.com](https://upstash.com)
+2. Klicke "Create Database"
+3. Wähle **Regional** und eine Region nahe deinem Vercel Deployment
+4. Kopiere aus dem Dashboard:
+   - `UPSTASH_REDIS_REST_URL`
+   - `UPSTASH_REDIS_REST_TOKEN`
+5. Füge diese als Environment Variables in Vercel hinzu
+
+**Siehe vollständige Anleitung:** [UPSTASH_MIGRATION.md](./UPSTASH_MIGRATION.md)
+
+**Option B: Standard Redis (Falls du eigenen Server hast)**
 1. Erstelle kostenlosen Account auf [redis.io](https://redis.io/cloud)
 2. Erstelle eine neue Redis-Datenbank
 3. Kopiere die Connection-URL (Format: `redis://default:password@host:port`)
 4. Füge als Environment Variable hinzu: `REDIS_URL`
 
-**Option B: Vercel KV (Alternative)**
+**Option C: Vercel KV (3,000 commands/day - begrenzt)**
 1. Gehe zu: https://vercel.com/dashboard
 2. Wähle dein Projekt → **Storage** Tab
 3. Klicke auf **Create Database**
@@ -143,7 +154,7 @@ Folge den Anweisungen und wähle:
    - `KV_REST_API_TOKEN`
    - `KV_REST_API_READ_ONLY_TOKEN`
 
-Der Bot priorisiert automatisch: `REDIS_URL` → Vercel KV → In-Memory (nicht persistent!)
+Der Bot priorisiert automatisch: `UPSTASH_REDIS_REST_URL` → `REDIS_URL` → Vercel KV → In-Memory (nicht persistent!)
 
 ### 3. Umgebungsvariablen setzen
 
@@ -159,12 +170,21 @@ vercel env add SHAREPOINT_SITE_ID
 vercel env add SHAREPOINT_DRIVE_ID
 vercel env add ONEDRIVE_FOLDER_PATH
 vercel env add RATE_LIMIT_DELAY
-vercel env add REDIS_URL
+
+# Storage (wähle eine Option):
+# Option A: Upstash Redis (empfohlen)
+vercel env add UPSTASH_REDIS_REST_URL
+vercel env add UPSTASH_REDIS_REST_TOKEN
+
+# Option B: Standard Redis
+# vercel env add REDIS_URL
+
+# Option C: Vercel KV wird automatisch hinzugefügt
 ```
 
 Oder im Vercel Dashboard unter "Settings" → "Environment Variables"
 
-**Wichtig:** Fügen Sie `REDIS_URL` hinzu für persistente Speicherung!
+**Wichtig:** Füge Upstash Redis Credentials hinzu für persistente Speicherung!
 
 ### 4. Deployen
 
@@ -445,6 +465,44 @@ Response:
 ```
 
 **Wichtig:** Einstellungsänderungen werden beim nächsten Batch/Chunk wirksam, nicht sofort für laufende Uploads.
+
+### POST /api/mark-all-uploaded
+
+Markiert alle Dateien in den OneDrive-Ordnern als bereits hochgeladen. Nützlich beim ersten Setup oder nach einem Reset, um zu verhindern, dass bereits vorhandene Dateien erneut gepostet werden.
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/mark-all-uploaded" -Method POST | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "All files marked as uploaded",
+  "stats": {
+    "foldersScanned": 5,
+    "filesFound": 1250,
+    "filesAlreadyMarked": 200,
+    "filesNewlyMarked": 1050,
+    "errors": 0,
+    "duration": 45230
+  }
+}
+```
+
+**Lokale Ausführung:**
+
+Für lokale Entwicklung kannst du auch das CLI-Script verwenden:
+
+```powershell
+npm run mark-all-uploaded
+```
+
+**Wann verwenden:**
+- ✅ **Erste Einrichtung**: Wenn bereits Dateien in OneDrive existieren, die nicht gepostet werden sollen
+- ✅ **Nach Redis-Reset**: Wenn der Redis-Cache gelöscht wurde
+- ✅ **Migration**: Beim Umzug von einem anderen System
+- ⚠️ **WARNUNG**: Diese Aktion markiert ALLE Dateien - sie werden nicht mehr automatisch gepostet!
 
 ## ⏱️ Automatische Synchronisierung
 

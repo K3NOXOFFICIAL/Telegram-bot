@@ -25,7 +25,28 @@ async function initializeStore() {
   if (storeInitializing) return storeInitializing;
   
   storeInitializing = (async () => {
-    // Priorität 1: REDIS_URL (Standard Redis)
+    // Priorität 1: Upstash Redis (REST API - empfohlen für Vercel)
+    if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+      try {
+        const { Redis } = require('@upstash/redis');
+        const redis = new Redis({
+          url: process.env.UPSTASH_REDIS_REST_URL,
+          token: process.env.UPSTASH_REDIS_REST_TOKEN,
+        });
+        
+        // Test connection
+        await redis.ping();
+        console.log('✅ Upstash Redis verbunden (REST API)');
+        
+        kvStore = redis;
+        storeInitialized = true;
+        return;
+      } catch (error) {
+        console.log('❌ Upstash Redis-Verbindung fehlgeschlagen:', error);
+      }
+    }
+    
+    // Priorität 2: Standard Redis (REDIS_URL)
     if (process.env.REDIS_URL) {
       try {
         const { createClient } = require('redis');
@@ -71,7 +92,7 @@ async function initializeStore() {
       }
     }
     
-    // Priorität 2: Vercel KV (nur wenn KV_REST_API_URL gesetzt ist)
+    // Priorität 3: Vercel KV (nur wenn KV_REST_API_URL gesetzt ist)
     if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
       try {
         const { kv } = require('@vercel/kv');
