@@ -290,12 +290,61 @@ Response:
 ```
 
 **📊 Error Logging & Frontend Display:**
-- Umfassendes Error-Logging für alle Sync-Operationen
-- Detaillierte Fehlerstatistiken im `errors` Feld der Response
-- Alle Sync-Daten (inkl. Fehler) werden in Echtzeit im Frontend angezeigt
-- Frontend zeigt JSON-formatierte Response mit allen Details in der Status-Anzeige
-- Automatische Aktualisierung alle 3 Sekunden während ein Sync läuft
-- Fehler werden sowohl in der Konsole geloggt als auch in der API-Response zurückgegeben
+- **Umfassendes Error-Logging** für alle Sync-Operationen
+- **Detaillierte Fehlerstatistiken** im `errors` Feld der Response
+- **Kategorisierte Fehler** nach Typ:
+  - 📊 **Rate Limit Errors (429)**: Telegram API Rate Limits
+  - ⏱️ **Timeout Errors**: Upload-Timeouts und Verbindungsprobleme
+  - 🌐 **Network Errors**: Netzwerkfehler (ECONNRESET, ENOTFOUND)
+  - 📤 **Upload Errors**: Fehler beim Datei-Upload
+  - ❓ **Other Errors**: Sonstige Fehler
+- **Vollständiger Error-Log** mit Timestamps, Dateinamen, Ordnern und Details
+- **Frontend-Anzeige**:
+  - Alle Sync-Daten werden in Echtzeit im Frontend angezeigt
+  - JSON-formatierte Response mit allen Details in der Status-Anzeige
+  - **Error Summary Dashboard** mit Fehler-Kategorien
+  - **Detaillierter Error-Log** (expandierbar) mit bis zu 50 letzten Fehlern
+  - **Error-Statistiken** in der Übersicht (rot markiert bei Fehlern)
+  - Automatische Aktualisierung alle 3 Sekunden während ein Sync läuft
+- **Console Logging**: Alle Fehler werden zusätzlich in der Console geloggt
+- **Persistenz**: Error-Logs werden mit den Sync-Stats gespeichert
+
+**Response mit Error-Details Beispiel:**
+```json
+{
+  "success": true,
+  "stats": {
+    "foldersScanned": 3,
+    "filesFound": 45,
+    "filesPosted": 40,
+    "errors": 5,
+    "duration": 15230,
+    "errorsByType": {
+      "rateLimitErrors": 2,
+      "timeoutErrors": 1,
+      "networkErrors": 1,
+      "uploadErrors": 1,
+      "otherErrors": 0
+    },
+    "errorLogs": [
+      {
+        "timestamp": "2025-10-15T12:05:23.456Z",
+        "type": "RATE_LIMIT_ERROR",
+        "errorCode": 429,
+        "message": "Telegram Rate Limit erreicht (429) - Retry nach 10s",
+        "file": "photo123.jpg",
+        "folder": "Urlaub 2025",
+        "details": {
+          "retryAfter": 10,
+          "attempt": 1,
+          "maxRetries": 5
+        }
+      }
+    ]
+  },
+  "timestamp": "2025-10-13T12:05:00.000Z"
+}
+```
 
 ### POST /api/force-unlock
 

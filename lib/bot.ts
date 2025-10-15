@@ -1,3 +1,6 @@
+import axios from 'axios';
+import FormData from 'form-data';
+import { BotConfig, TelegramMessage, TelegramResponse, TelegramTopic } from './types';
 
 /**
  * Telegram Bot Client Klasse
@@ -263,6 +266,8 @@ export class TelegramBot {
       console.error('Fehler beim Senden des Videos per URL:', errorData || error.message);
       return null;
     }
+  }
+  
   /**
    * Hilfsfunktion: Lädt eine Datei von einer URL als Buffer herunter
    */
@@ -337,6 +342,8 @@ export class TelegramBot {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
+
+/**
  * Multi-Bot Manager für parallele Uploads
  * Verteilt Uploads auf mehrere Bots um Rate-Limits zu umgehen
  * 
