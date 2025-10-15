@@ -36,28 +36,60 @@ async function markAllAsUploaded() {
     
     // Get all subfolders from the configured OneDrive path
     const folders = await onedrive.listSubfolders(config.onedriveFolderPath);
-    console.log(`📁 Found ${folders.length} folders\n`);
-    
-    if (folders.length === 0) {
-      console.log('⚠️  No folders found to process');
+    console.log(`📁 Found ${folders.length} child folders\n`);
+
+    // Also collect files sitting directly in the configured folder (root files)
+    const rootFiles = await onedrive.listFilesInFolder(config.onedriveFolderPath);
+    if (rootFiles.length > 0) console.log(`📄 Found ${rootFiles.length} files in root folder\n`);
+
+    // If no folders and no root files, nothing to do
+    if (folders.length === 0 && rootFiles.length === 0) {
+      console.log('⚠️  No folders or files found to process');
       return;
     }
 
-    // Process each folder
+    // First process root files as a pseudo-folder
+    if (rootFiles.length > 0) {
+      stats.foldersScanned++;
+      const folderName = config.onedriveFolderPath || 'root';
+      const mediaFiles = rootFiles.filter(f => onedrive.isMediaFile(f));
+      console.log(`📂 Processing root (${folderName}) - ${mediaFiles.length} media files`);
+
+      stats.filesFound += mediaFiles.length;
+      for (const file of mediaFiles) {
+        try {
+          const alreadyPosted = await isFilePosted(file.id);
+          if (alreadyPosted) {
+            stats.filesAlreadyMarked++;
+          } else {
+            await markFileAsPosted(file.id, file.name, folderName, 0);
+            stats.filesNewlyMarked++;
+            console.log(`  ✅ Marked: ${file.name}`);
+          }
+        } catch (error: any) {
+          stats.errors++;
+          console.error(`  ❌ Failed to mark ${file.name}: ${error?.message || error}`);
+        }
+      }
+      console.log('');
+    }
+
+    // Process each child folder
     for (const folder of folders) {
       stats.foldersScanned++;
       
       try {
         console.log(`📂 Processing folder: ${folder.name}`);
         
-        // Get all files from the folder and subfolders (e.g., images/, videos/)
-        const files = await onedrive.listFilesRecursive(folder.path);
-        console.log(`  📄 Found ${files.length} files`);
+  // Get all files from the folder and subfolders (e.g., images/, videos/)
+  const files = await onedrive.listFilesRecursive(folder.path);
+  const mediaFiles = files.filter(f => onedrive.isMediaFile(f));
+  console.log(`  📄 Found ${mediaFiles.length} media files`);
         
-        stats.filesFound += files.length;
+  stats.filesFound += mediaFiles.length;
         
-        // Mark each file as posted
-        for (const file of files) {
+  // Mark each file as posted
+  for (const file of mediaFiles) {
           try {
             // Check if already marked
             const alreadyPosted = await isFilePosted(file.id);

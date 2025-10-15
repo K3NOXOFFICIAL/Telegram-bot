@@ -180,7 +180,7 @@ export class OneDriveClient {
   /**
    * Listet rekursiv alle Dateien in einem Ordner und seinen Unterordnern auf
    */
-  async listFilesRecursive(folderPath: string, maxDepth: number = 2): Promise<OneDriveItem[]> {
+  async listFilesRecursive(folderPath: string, maxDepth: number = Infinity): Promise<OneDriveItem[]> {
     const allFiles: OneDriveItem[] = [];
     
     try {
