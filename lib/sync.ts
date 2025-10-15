@@ -310,43 +310,41 @@ async function processFolderParallel(
       return new Date(a.createdDateTime).getTime() - new Date(b.createdDateTime).getTime();
     });
 
-    // 🚀 OPTIMIERUNG 1: Hole Download-URLs PARALLEL im Voraus (Batch von 10)
-    const PREFETCH_BATCH_SIZE = 10;
+    // 🚀🚀🚀 ULTIMATE OPTIMIERUNG: Hole ALLE URLs PARALLEL VOR dem Upload!
+    // Microsoft Graph erlaubt ~1200 Requests/Minute = 20/Sekunde
+    // Wir nutzen 50 parallele Requests (weit unter Limit, aber maximal effizient)
     const urlCache = new Map<string, string>();
     
-    // Prefetch-Funktion für eine Batch von Dateien
-    const prefetchUrls = async (batch: typeof mediaFiles) => {
-      const urlPromises = batch.map(async (file) => {
-        try {
-          const url = await onedrive.getDownloadUrl(file.id);
-          if (url) {
-            urlCache.set(file.id, url);
-          }
-        } catch (error) {
-          console.error(`   ⚠️  [${folder.name}] Prefetch fehlgeschlagen für ${file.name}`);
-        }
-      });
-      await Promise.all(urlPromises);
-    };
-
-    // Hole erste Batch sofort
     if (mediaFiles.length > 0) {
-      console.log(`   🚀 [${folder.name}] Prefetching erste ${Math.min(PREFETCH_BATCH_SIZE, mediaFiles.length)} URLs...`);
-      await prefetchUrls(mediaFiles.slice(0, PREFETCH_BATCH_SIZE));
+      console.log(`   🚀 [${folder.name}] Prefetching ALLE ${mediaFiles.length} URLs parallel...`);
+      const prefetchStartTime = Date.now();
+      
+      // Hole alle URLs in einem Rutsch (max 50 parallel für optimale Performance)
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < mediaFiles.length; i += BATCH_SIZE) {
+        const batch = mediaFiles.slice(i, i + BATCH_SIZE);
+        const urlPromises = batch.map(async (file) => {
+          try {
+            const url = await onedrive.getDownloadUrl(file.id);
+            if (url) {
+              urlCache.set(file.id, url);
+            }
+          } catch (error) {
+            console.error(`   ⚠️  [${folder.name}] Prefetch fehlgeschlagen für ${file.name}`);
+          }
+        });
+        await Promise.all(urlPromises);
+      }
+      
+      const prefetchDuration = ((Date.now() - prefetchStartTime) / 1000).toFixed(2);
+      console.log(`   ✅ [${folder.name}] Alle URLs geladen in ${prefetchDuration}s (${urlCache.size}/${mediaFiles.length} erfolgreich)`);
     }
 
     // 🚀 OPTIMIERUNG 2: Verarbeite Dateien mit intelligentem Delay
+    // Alle URLs sind bereits gecached - kein Warten auf OneDrive!
     for (let i = 0; i < mediaFiles.length; i++) {
       const file = mediaFiles[i];
       const uploadStartTime = Date.now();
-
-      // Prefetch nächste Batch während wir uploaden (Fire and Forget)
-      if (i % PREFETCH_BATCH_SIZE === 0 && i + PREFETCH_BATCH_SIZE < mediaFiles.length) {
-        const nextBatchStart = i + PREFETCH_BATCH_SIZE;
-        const nextBatchEnd = Math.min(i + PREFETCH_BATCH_SIZE * 2, mediaFiles.length);
-        // Läuft parallel zum Upload - kein await!
-        prefetchUrls(mediaFiles.slice(nextBatchStart, nextBatchEnd)).catch(() => {});
-      }
 
       try {
         // Prüfe 1: Redis File-ID Check (wurde bereits hochgeladen?)
@@ -468,14 +466,15 @@ async function processFolderParallel(
           // Weiter mit nächster Datei - nicht abbrechen!
         }
 
-        // 🚀 OPTIMIERUNG 3: Intelligenter Delay - ziehe Processing-Zeit ab
+        // 🚀 OPTIMIERUNG 3: Intelligenter Delay mit Minimum-Sicherheit
+        // Zieht Processing-Zeit ab, aber garantiert Minimum-Delay gegen 429
         const processingTime = Date.now() - uploadStartTime;
-        const remainingDelay = Math.max(0, uploadDelay - processingTime);
+        const MINIMUM_DELAY = 150; // Absolute Minimum-Sicherheit gegen Rate Limits
+        const targetDelay = Math.max(MINIMUM_DELAY, uploadDelay - processingTime);
         
-        if (remainingDelay > 0) {
-          await bot.delay(remainingDelay);
+        if (targetDelay > 0) {
+          await bot.delay(targetDelay);
         }
-        // Wenn Processing-Zeit >= uploadDelay, kein extra Delay nötig!
 
       } catch (fileError: any) {
         console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);

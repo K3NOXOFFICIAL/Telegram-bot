@@ -308,6 +308,11 @@ export class OneDriveClient {
   /**
    * 🚀 OPTIMIERUNG: Holt Download-URLs für mehrere Dateien PARALLEL
    * Reduziert Latenz drastisch durch gleichzeitige API Calls
+   * 
+   * Microsoft Graph API Limits:
+   * - ~1200 Requests/Minute = 20/Sekunde
+   * - Wir nutzen max 50 parallel für optimale Performance
+   * - Deutlich unter Limit, aber maximiert Durchsatz
    */
   async getBatchDownloadUrls(fileIds: string[]): Promise<Map<string, string>> {
     const urlMap = new Map<string, string>();

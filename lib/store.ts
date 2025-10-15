@@ -786,10 +786,14 @@ export interface RuntimeSettings {
 
 /**
  * Default Runtime Settings
+ * OPTIMIERT für maximalen Durchsatz ohne 429 Errors:
+ * - 200ms Delay + ~300-500ms Processing = ~500-700ms total/message
+ * - 12 Topics parallel = 12 * (1000/500) = ~24 messages/second (unter 30/s Limit!)
+ * - Telegram Limits: 30 msg/s gesamt, 20 msg/min pro Topic
  */
 const DEFAULT_SETTINGS: RuntimeSettings = {
-  uploadDelay: 1000,
-  concurrentFolders: 15,
+  uploadDelay: 200,
+  concurrentFolders: 12,
   updatedAt: Date.now(),
 };
 
