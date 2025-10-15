@@ -178,7 +178,7 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
             }
 
             // Rate Limiting: 3s zwischen Posts (20 msg/min Limit)
-            await bot.delay(3000);
+            await bot.delay(1000);
 
           } catch (fileError) {
             console.error(`❌ Fehler bei Datei ${file.name}:`, fileError);
@@ -410,7 +410,7 @@ async function processFolderParallel(
 
         // Telegram Limit: 20 msg/min pro Chat = 3s zwischen msgs
         // Bei 6 parallelen Topics = 30 msg/sec insgesamt (Max!)
-        await bot.delay(3000);
+        await bot.delay(1000);
 
       } catch (fileError: any) {
         console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);
