@@ -177,8 +177,8 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
               stats.errors++;
             }
 
-            // Rate Limiting: 1s base delay (actual rate limited by processing overhead)
-            await bot.delay(1000);
+            // Rate Limiting: 250ms base delay (actual rate limited by processing overhead)
+            await bot.delay(250);
 
           } catch (fileError) {
             console.error(`❌ Fehler bei Datei ${file.name}:`, fileError);
@@ -281,7 +281,7 @@ async function processFolderParallel(
   const { updateUploadSpeed } = await import('./store');
   
   // Verwende Runtime-Settings oder Fallback
-  const uploadDelay = runtimeSettings?.uploadDelay || 1000;
+  const uploadDelay = runtimeSettings?.uploadDelay || 250;
 
   try {
     const folderStartTime = Date.now();
