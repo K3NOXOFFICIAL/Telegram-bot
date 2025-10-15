@@ -304,4 +304,38 @@ export class OneDriveClient {
       throw error;
     }
   }
+
+  /**
+   * 🚀 OPTIMIERUNG: Holt Download-URLs für mehrere Dateien PARALLEL
+   * Reduziert Latenz drastisch durch gleichzeitige API Calls
+   */
+  async getBatchDownloadUrls(fileIds: string[]): Promise<Map<string, string>> {
+    const urlMap = new Map<string, string>();
+    
+    if (fileIds.length === 0) {
+      return urlMap;
+    }
+
+    // Hole alle URLs parallel
+    const urlPromises = fileIds.map(async (fileId) => {
+      try {
+        const url = await this.getDownloadUrl(fileId);
+        return { fileId, url };
+      } catch (error) {
+        console.error(`Fehler beim Abrufen der Download-URL für ${fileId}:`, error);
+        return { fileId, url: null };
+      }
+    });
+
+    const results = await Promise.all(urlPromises);
+    
+    // Baue Map auf
+    for (const result of results) {
+      if (result.url) {
+        urlMap.set(result.fileId, result.url);
+      }
+    }
+
+    return urlMap;
+  }
 }

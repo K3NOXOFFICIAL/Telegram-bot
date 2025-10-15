@@ -262,6 +262,7 @@ export async function processFile(
 /**
  * Verarbeitet einen Ordner (Helper für parallele Verarbeitung)
  * Mit robustem Error Handling - Fehler stoppen nicht den gesamten Prozess
+ * OPTIMIERT: Minimiert OneDrive API Calls und nutzt intelligente Delays
  */
 async function processFolderParallel(
   folder: { id: string; name: string; path: string },
@@ -309,7 +310,44 @@ async function processFolderParallel(
       return new Date(a.createdDateTime).getTime() - new Date(b.createdDateTime).getTime();
     });
 
-    for (const file of mediaFiles) {
+    // 🚀 OPTIMIERUNG 1: Hole Download-URLs PARALLEL im Voraus (Batch von 10)
+    const PREFETCH_BATCH_SIZE = 10;
+    const urlCache = new Map<string, string>();
+    
+    // Prefetch-Funktion für eine Batch von Dateien
+    const prefetchUrls = async (batch: typeof mediaFiles) => {
+      const urlPromises = batch.map(async (file) => {
+        try {
+          const url = await onedrive.getDownloadUrl(file.id);
+          if (url) {
+            urlCache.set(file.id, url);
+          }
+        } catch (error) {
+          console.error(`   ⚠️  [${folder.name}] Prefetch fehlgeschlagen für ${file.name}`);
+        }
+      });
+      await Promise.all(urlPromises);
+    };
+
+    // Hole erste Batch sofort
+    if (mediaFiles.length > 0) {
+      console.log(`   🚀 [${folder.name}] Prefetching erste ${Math.min(PREFETCH_BATCH_SIZE, mediaFiles.length)} URLs...`);
+      await prefetchUrls(mediaFiles.slice(0, PREFETCH_BATCH_SIZE));
+    }
+
+    // 🚀 OPTIMIERUNG 2: Verarbeite Dateien mit intelligentem Delay
+    for (let i = 0; i < mediaFiles.length; i++) {
+      const file = mediaFiles[i];
+      const uploadStartTime = Date.now();
+
+      // Prefetch nächste Batch während wir uploaden (Fire and Forget)
+      if (i % PREFETCH_BATCH_SIZE === 0 && i + PREFETCH_BATCH_SIZE < mediaFiles.length) {
+        const nextBatchStart = i + PREFETCH_BATCH_SIZE;
+        const nextBatchEnd = Math.min(i + PREFETCH_BATCH_SIZE * 2, mediaFiles.length);
+        // Läuft parallel zum Upload - kein await!
+        prefetchUrls(mediaFiles.slice(nextBatchStart, nextBatchEnd)).catch(() => {});
+      }
+
       try {
         // Prüfe 1: Redis File-ID Check (wurde bereits hochgeladen?)
         const alreadyPosted = await isFilePosted(file.id);
@@ -336,7 +374,14 @@ async function processFolderParallel(
           continue;
         }
 
-        const downloadUrl = await onedrive.getDownloadUrl(file.id);
+        // Hole URL aus Cache (sollte bereits vorhanden sein durch Prefetching)
+        let downloadUrl = urlCache.get(file.id);
+        if (!downloadUrl) {
+          // Fallback: Hole URL jetzt (sollte selten vorkommen)
+          console.log(`   🔄 [${folder.name}] Cache miss - hole URL für ${file.name}`);
+          downloadUrl = await onedrive.getDownloadUrl(file.id);
+        }
+        
         if (!downloadUrl) {
           console.error(`   ❌ [${folder.name}] Keine Download-URL für ${file.name}`);
           localStats.errors++;
@@ -423,9 +468,14 @@ async function processFolderParallel(
           // Weiter mit nächster Datei - nicht abbrechen!
         }
 
-        // Rate limiting: Verwende Runtime-Settings
-        // Retry logic handles any 429 errors gracefully
-        await bot.delay(uploadDelay);
+        // 🚀 OPTIMIERUNG 3: Intelligenter Delay - ziehe Processing-Zeit ab
+        const processingTime = Date.now() - uploadStartTime;
+        const remainingDelay = Math.max(0, uploadDelay - processingTime);
+        
+        if (remainingDelay > 0) {
+          await bot.delay(remainingDelay);
+        }
+        // Wenn Processing-Zeit >= uploadDelay, kein extra Delay nötig!
 
       } catch (fileError: any) {
         console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);
