@@ -172,6 +172,64 @@
             border-color: #0c5460;
             color: #0c5460;
         }
+        .error-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 10px;
+        }
+        .error-section h3 {
+            margin: 0 0 10px 0;
+            color: #856404;
+            font-size: 1.1em;
+        }
+        .error-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .error-type {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+        }
+        .error-type-label {
+            font-size: 0.8em;
+            color: #666;
+        }
+        .error-type-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #dc3545;
+        }
+        .error-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+        .error-entry {
+            padding: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid #dc3545;
+            background: #f8f9fa;
+        }
+        .error-entry-header {
+            font-weight: bold;
+            color: #721c24;
+            margin-bottom: 5px;
+        }
+        .error-entry-details {
+            color: #495057;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
@@ -224,11 +282,76 @@
         function updateOutput(data, title = '') {
             const output = document.getElementById('output');
             const timestamp = new Date().toLocaleString('de-DE');
-            output.innerHTML = `
+            
+            let html = `
                 <strong>${title}</strong><br>
                 <small>🕐 ${timestamp}</small><br><br>
-                <pre>${JSON.stringify(data, null, 2)}</pre>
             `;
+            
+            // Check if there are errors to display
+            if (data.stats && (data.stats.errorLogs || data.stats.errorsByType)) {
+                const errorLogs = data.stats.errorLogs || [];
+                const errorsByType = data.stats.errorsByType || {};
+                const totalErrors = data.stats.errors || 0;
+                
+                if (totalErrors > 0) {
+                    html += `
+                        <div class="error-section">
+                            <h3>⚠️ Error Report (${totalErrors} total)</h3>
+                            
+                            <div class="error-summary">
+                                <div class="error-type">
+                                    <div class="error-type-label">429 Rate Limit</div>
+                                    <div class="error-type-value">${errorsByType.rateLimitErrors || 0}</div>
+                                </div>
+                                <div class="error-type">
+                                    <div class="error-type-label">Timeouts</div>
+                                    <div class="error-type-value">${errorsByType.timeoutErrors || 0}</div>
+                                </div>
+                                <div class="error-type">
+                                    <div class="error-type-label">Network</div>
+                                    <div class="error-type-value">${errorsByType.networkErrors || 0}</div>
+                                </div>
+                                <div class="error-type">
+                                    <div class="error-type-label">Upload</div>
+                                    <div class="error-type-value">${errorsByType.uploadErrors || 0}</div>
+                                </div>
+                                <div class="error-type">
+                                    <div class="error-type-label">Other</div>
+                                    <div class="error-type-value">${errorsByType.otherErrors || 0}</div>
+                                </div>
+                            </div>
+                            
+                            ${errorLogs.length > 0 ? `
+                                <details>
+                                    <summary style="cursor: pointer; font-weight: bold; margin-bottom: 10px;">
+                                        � Detailed Error Log (${errorLogs.length} entries) - Click to expand
+                                    </summary>
+                                    <div class="error-log">
+                                        ${errorLogs.slice(-50).reverse().map(err => `
+                                            <div class="error-entry">
+                                                <div class="error-entry-header">
+                                                    ${err.type}${err.errorCode ? ` (${err.errorCode})` : ''}
+                                                    ${err.file ? ` - ${err.file}` : ''}
+                                                </div>
+                                                <div class="error-entry-details">
+                                                    <div><strong>Folder:</strong> ${err.folder || 'N/A'}</div>
+                                                    <div><strong>Message:</strong> ${err.message}</div>
+                                                    <div><strong>Time:</strong> ${new Date(err.timestamp).toLocaleString('de-DE')}</div>
+                                                    ${err.details ? `<div><strong>Details:</strong> ${JSON.stringify(err.details, null, 2)}</div>` : ''}
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </details>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+            }
+            
+            html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            output.innerHTML = html;
         }
 
         function updateStats(data) {
@@ -262,6 +385,10 @@
                         <div class="stat-card">
                             <div class="stat-label">Folders</div>
                             <div class="stat-value">${data.currentSync.foldersScanned || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Errors</div>
+                            <div class="stat-value" style="color: ${(data.currentSync.errors || 0) > 0 ? '#dc3545' : '#28a745'};">${data.currentSync.errors || 0}</div>
                         </div>
                     `;
                 }

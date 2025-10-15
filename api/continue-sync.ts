@@ -88,11 +88,25 @@ export default async function handler(
   } catch (error: any) {
     console.error('❌ Fehler im Continue-Sync:', error);
 
+    // Auto-Recovery: Bei kritischen Fehlern Lock freigeben
+    try {
+      const { releaseSyncLock, getSyncLockStatus } = await import('../lib/store');
+      const lockStatus = await getSyncLockStatus();
+      
+      if (lockStatus.locked) {
+        console.log('🔓 Gebe Lock wegen Fehler frei für Auto-Recovery');
+        await releaseSyncLock();
+      }
+    } catch (cleanupError) {
+      console.error('❌ Fehler beim Cleanup:', cleanupError);
+    }
+
     return res.status(500).json({
       success: false,
       error: 'Fortsetzung fehlgeschlagen',
       message: error.message,
       timestamp: new Date().toISOString(),
+      autoRecovery: 'Lock wurde freigegeben, Health Monitor wird automatisch neu starten',
     });
   }
 }

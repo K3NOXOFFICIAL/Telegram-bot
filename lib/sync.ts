@@ -11,6 +11,19 @@ import { isFilePosted, markFileAsPosted, acquireSyncLock, releaseSyncLock } from
 import { BotConfig, OneDriveItem } from './types';
 
 /**
+ * Detaillierter Fehlerlog-Eintrag
+ */
+export interface ErrorLog {
+  timestamp: string;
+  type: string;
+  errorCode?: number;
+  message: string;
+  file?: string;
+  folder?: string;
+  details?: any;
+}
+
+/**
  * Synchronisierungsstatistiken
  */
 export interface SyncStats {
@@ -19,6 +32,14 @@ export interface SyncStats {
   filesPosted: number;
   errors: number;
   duration: number;
+  errorLogs?: ErrorLog[];
+  errorsByType?: {
+    rateLimitErrors: number;
+    timeoutErrors: number;
+    networkErrors: number;
+    uploadErrors: number;
+    otherErrors: number;
+  };
 }
 
 /**
@@ -271,12 +292,33 @@ async function processFolderParallel(
   bot: MultiBotManager, // Multi-Bot!
   topicManager: TopicManager,
   config: BotConfig,
-  runtimeSettings?: { uploadDelay: number; concurrentFolders: number }
+  runtimeSettings?: { uploadDelay: number; concurrentFolders: number },
+  errorLogs?: ErrorLog[]
 ): Promise<{ filesFound: number; filesPosted: number; errors: number }> {
   const localStats = {
     filesFound: 0,
     filesPosted: 0,
     errors: 0
+  };
+
+  // Helper function to log errors
+  const logError = (type: string, message: string, errorCode?: number, file?: string, details?: any) => {
+    const errorLog: ErrorLog = {
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+      errorCode,
+      file,
+      folder: folder.name,
+      details
+    };
+    
+    if (errorLogs) {
+      errorLogs.push(errorLog);
+    }
+    
+    // Also log to console for immediate visibility
+    console.error(`   ❌ [${folder.name}] ${type}: ${message}`, details || '');
   };
 
   // Lade updateUploadSpeed Funktion
@@ -292,7 +334,7 @@ async function processFolderParallel(
 
     const topicId = await topicManager.getOrCreateTopic(folder.name);
     if (!topicId) {
-      console.error(`❌ [${folder.name}] Topic-Erstellung fehlgeschlagen`);
+      logError('TOPIC_CREATION_ERROR', `Topic-Erstellung fehlgeschlagen für ${folder.name}`);
       localStats.errors++;
       return localStats;
     }
@@ -324,14 +366,14 @@ async function processFolderParallel(
       const BATCH_SIZE = 50;
       for (let i = 0; i < mediaFiles.length; i += BATCH_SIZE) {
         const batch = mediaFiles.slice(i, i + BATCH_SIZE);
-        const urlPromises = batch.map(async (file) => {
+          const urlPromises = batch.map(async (file) => {
           try {
             const url = await onedrive.getDownloadUrl(file.id);
             if (url) {
               urlCache.set(file.id, url);
             }
-          } catch (error) {
-            console.error(`   ⚠️  [${folder.name}] Prefetch fehlgeschlagen für ${file.name}`);
+          } catch (error: any) {
+            logError('PREFETCH_ERROR', `URL-Prefetch fehlgeschlagen`, undefined, file.name, error.message);
           }
         });
         await Promise.all(urlPromises);
@@ -408,7 +450,7 @@ async function processFolderParallel(
         }
         
         if (!downloadUrl) {
-          console.error(`   ❌ [${folder.name}] Keine Download-URL für ${file.name}`);
+          logError('DOWNLOAD_URL_ERROR', 'Keine Download-URL verfügbar', undefined, file.name);
           localStats.errors++;
           continue; // Weiter mit nächster Datei
         }
@@ -433,21 +475,46 @@ async function processFolderParallel(
             // Rate Limit Error - warte und versuche erneut
             if (sendError?.error_code === 429) {
               const retryAfter = sendError?.parameters?.retry_after || 10;
+              logError('RATE_LIMIT_ERROR', `Telegram Rate Limit erreicht (429) - Retry nach ${retryAfter}s`, 429, file.name, {
+                retryAfter,
+                attempt: retryCount,
+                maxRetries,
+                parameters: sendError?.parameters
+              });
               console.log(`   ⏳ [${folder.name}] Rate limit - warte ${retryAfter}s (Versuch ${retryCount}/${maxRetries})`);
               await bot.delay(retryAfter * 1000);
             } 
             // Timeout Error - warte kurz und versuche erneut
             else if (sendError?.message?.includes('timeout') || sendError?.code === 'ETIMEDOUT') {
+              logError('TIMEOUT_ERROR', `Upload Timeout`, undefined, file.name, {
+                attempt: retryCount,
+                maxRetries,
+                code: sendError?.code,
+                message: sendError?.message
+              });
               console.log(`   ⏳ [${folder.name}] Timeout - warte 5s (Versuch ${retryCount}/${maxRetries})`);
               await bot.delay(5000);
             }
             // Network Error - warte und versuche erneut
             else if (sendError?.code === 'ECONNRESET' || sendError?.code === 'ENOTFOUND') {
+              logError('NETWORK_ERROR', `Netzwerkfehler: ${sendError?.code}`, undefined, file.name, {
+                attempt: retryCount,
+                maxRetries,
+                code: sendError?.code,
+                message: sendError?.message
+              });
               console.log(`   ⏳ [${folder.name}] Netzwerkfehler - warte 10s (Versuch ${retryCount}/${maxRetries})`);
               await bot.delay(10000);
             }
             // Andere Fehler - logge und breche ab
             else {
+              logError('UPLOAD_ERROR', `Upload fehlgeschlagen: ${sendError?.description || sendError?.message}`, sendError?.error_code, file.name, {
+                errorCode: sendError?.error_code,
+                code: sendError?.code,
+                description: sendError?.description,
+                message: sendError?.message,
+                response: sendError?.response
+              });
               console.error(`   ❌ [${folder.name}] Fehler beim Upload (${sendError?.error_code || sendError?.code}): ${sendError?.description || sendError?.message}`);
               break; // Kein Retry bei unbekannten Fehlern
             }
@@ -488,6 +555,11 @@ async function processFolderParallel(
           
           console.log(`   ✅ [${folder.name}] ${file.name} (${topicMessageTimestamps.length} msg in letzter Minute)`);
         } else {
+          logError('UPLOAD_FAILED', `Upload fehlgeschlagen nach ${maxRetries} Versuchen`, lastError?.error_code, file.name, {
+            lastError: lastError?.description || lastError?.message,
+            errorCode: lastError?.error_code,
+            attempts: maxRetries
+          });
           console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen nach ${maxRetries} Versuchen: ${file.name}`);
           if (lastError) {
             console.error(`   ❌ [${folder.name}] Letzter Fehler:`, lastError?.description || lastError?.message);
@@ -512,6 +584,7 @@ async function processFolderParallel(
         }
 
       } catch (fileError: any) {
+        logError('FILE_PROCESSING_ERROR', `Fehler bei Dateiverarbeitung: ${fileError?.message || fileError}`, undefined, file.name, fileError);
         console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);
         localStats.errors++;
         // Weiter mit nächster Datei - nicht abbrechen!
@@ -525,6 +598,7 @@ async function processFolderParallel(
     return localStats;
 
   } catch (folderError: any) {
+    logError('FOLDER_PROCESSING_ERROR', `Kritischer Ordner-Fehler: ${folderError?.message || folderError}`, undefined, undefined, folderError);
     console.error(`❌ [${folder.name}] Kritischer Ordner-Fehler:`, folderError?.message || folderError);
     localStats.errors++;
     // Gebe Stats zurück, damit andere Ordner weiterlaufen
@@ -563,7 +637,29 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     filesPosted: 0,
     errors: 0,
     duration: 0,
+    errorLogs: [],
+    errorsByType: {
+      rateLimitErrors: 0,
+      timeoutErrors: 0,
+      networkErrors: 0,
+      uploadErrors: 0,
+      otherErrors: 0
+    }
   };
+  
+  // Initialize error logs if not present
+  if (!stats.errorLogs) {
+    stats.errorLogs = [];
+  }
+  if (!stats.errorsByType) {
+    stats.errorsByType = {
+      rateLimitErrors: 0,
+      timeoutErrors: 0,
+      networkErrors: 0,
+      uploadErrors: 0,
+      otherErrors: 0
+    };
+  }
   
   // Setze Startzeit nur wenn neue Session
   if (!previousStats) {
@@ -631,7 +727,7 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       // Verwende allSettled statt all - Fehler in einem Ordner stoppen nicht die anderen
       const batchPromises = await Promise.allSettled(
         batch.map(folder => 
-          processFolderParallel(folder, onedrive, bot, topicManager, config, runtimeSettings)
+          processFolderParallel(folder, onedrive, bot, topicManager, config, runtimeSettings, stats.errorLogs)
         )
       );
       
@@ -685,6 +781,17 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       console.log(`   - Fehler: ${stats.errors}`);
       console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
       
+      // Kategorisiere Fehler auch bei Continuation
+      if (stats.errorLogs && stats.errorLogs.length > 0) {
+        stats.errorsByType = {
+          rateLimitErrors: stats.errorLogs.filter(e => e.type === 'RATE_LIMIT_ERROR').length,
+          timeoutErrors: stats.errorLogs.filter(e => e.type === 'TIMEOUT_ERROR').length,
+          networkErrors: stats.errorLogs.filter(e => e.type === 'NETWORK_ERROR').length,
+          uploadErrors: stats.errorLogs.filter(e => e.type === 'UPLOAD_ERROR' || e.type === 'UPLOAD_FAILED').length,
+          otherErrors: stats.errorLogs.filter(e => !['RATE_LIMIT_ERROR', 'TIMEOUT_ERROR', 'NETWORK_ERROR', 'UPLOAD_ERROR', 'UPLOAD_FAILED'].includes(e.type)).length
+        };
+      }
+      
       // Speichere Stats mit 'needs continuation' Flag und totalFolders
       await saveSyncStats({
         ...stats,
@@ -711,6 +818,24 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     console.log(`   - Dateien gepostet: ${stats.filesPosted}`);
     console.log(`   - Fehler: ${stats.errors}`);
     console.log(`   - Dauer: ${(stats.duration / 1000).toFixed(2)}s`);
+
+    // Kategorisiere Fehler nach Typ
+    if (stats.errorLogs && stats.errorLogs.length > 0) {
+      stats.errorsByType = {
+        rateLimitErrors: stats.errorLogs.filter(e => e.type === 'RATE_LIMIT_ERROR').length,
+        timeoutErrors: stats.errorLogs.filter(e => e.type === 'TIMEOUT_ERROR').length,
+        networkErrors: stats.errorLogs.filter(e => e.type === 'NETWORK_ERROR').length,
+        uploadErrors: stats.errorLogs.filter(e => e.type === 'UPLOAD_ERROR' || e.type === 'UPLOAD_FAILED').length,
+        otherErrors: stats.errorLogs.filter(e => !['RATE_LIMIT_ERROR', 'TIMEOUT_ERROR', 'NETWORK_ERROR', 'UPLOAD_ERROR', 'UPLOAD_FAILED'].includes(e.type)).length
+      };
+      
+      console.log(`\n📊 Fehler-Kategorien:`);
+      console.log(`   - Rate Limit (429): ${stats.errorsByType.rateLimitErrors}`);
+      console.log(`   - Timeouts: ${stats.errorsByType.timeoutErrors}`);
+      console.log(`   - Netzwerk: ${stats.errorsByType.networkErrors}`);
+      console.log(`   - Upload: ${stats.errorsByType.uploadErrors}`);
+      console.log(`   - Sonstige: ${stats.errorsByType.otherErrors}`);
+    };
 
     // Markiere als abgeschlossen und lösche Fortschritt
     await saveSyncProgress(null);

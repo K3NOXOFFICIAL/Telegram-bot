@@ -1,13 +1,3 @@
-/**
- * Telegram Bot API Wrapper
- * Behandelt alle Interaktionen mit der Telegram Bot API
- * + Multi-Bot Manager für parallele Uploads (Rate-Limit Umgehung)
- */
-
-import axios from 'axios';
-import FormData from 'form-data';
-import { TelegramResponse, TelegramMessage, TelegramTopic } from './types';
-import { BotConfig } from './types';
 
 /**
  * Telegram Bot Client Klasse
@@ -157,11 +147,27 @@ export class TelegramBot {
         return response.data.result!;
       }
 
+      // Fallback: Telegram can't fetch the URL
+      const errorData = response.data;
+      if (
+        errorData?.error_code === 400 &&
+        typeof errorData?.description === 'string' &&
+        errorData.description.includes('failed to get HTTP URL content')
+      ) {
+        try {
+          // Download photo as buffer and send directly
+          const photoBuffer = await this.downloadFileBuffer(photoUrl);
+          return await this.sendPhoto(photoBuffer, 'photo.jpg', caption, messageThreadId);
+        } catch (downloadErr) {
+          console.error('Fallback-Fehler beim Herunterladen des Fotos:', downloadErr);
+          return null;
+        }
+      }
+
       console.error('Telegram API Fehler:', response.data);
       return null;
     } catch (error: any) {
       const errorData = error.response?.data;
-      
       // Handle 429 Rate Limit
       if (errorData?.error_code === 429 && retryCount < 3) {
         const retryAfter = errorData.parameters?.retry_after || 5;
@@ -169,7 +175,20 @@ export class TelegramBot {
         await this.delay(retryAfter * 1000);
         return this.sendPhotoByUrl(photoUrl, caption, messageThreadId, retryCount + 1);
       }
-      
+      // Fallback: Telegram can't fetch the URL
+      if (
+        errorData?.error_code === 400 &&
+        typeof errorData?.description === 'string' &&
+        errorData.description.includes('failed to get HTTP URL content')
+      ) {
+        try {
+          const photoBuffer = await this.downloadFileBuffer(photoUrl);
+          return await this.sendPhoto(photoBuffer, 'photo.jpg', caption, messageThreadId);
+        } catch (downloadErr) {
+          console.error('Fallback-Fehler beim Herunterladen des Fotos:', downloadErr);
+          return null;
+        }
+      }
       console.error('Fehler beim Senden des Fotos per URL:', errorData || error.message);
       return null;
     }
@@ -199,11 +218,27 @@ export class TelegramBot {
         return response.data.result!;
       }
 
+      // Fallback: Telegram can't fetch the URL
+      const errorData = response.data;
+      if (
+        errorData?.error_code === 400 &&
+        typeof errorData?.description === 'string' &&
+        errorData.description.includes('failed to get HTTP URL content')
+      ) {
+        try {
+          // Download video as buffer and send directly
+          const videoBuffer = await this.downloadFileBuffer(videoUrl);
+          return await this.sendVideo(videoBuffer, 'video.mp4', caption, messageThreadId);
+        } catch (downloadErr) {
+          console.error('Fallback-Fehler beim Herunterladen des Videos:', downloadErr);
+          return null;
+        }
+      }
+
       console.error('Telegram API Fehler:', response.data);
       return null;
     } catch (error: any) {
       const errorData = error.response?.data;
-      
       // Handle 429 Rate Limit
       if (errorData?.error_code === 429 && retryCount < 3) {
         const retryAfter = errorData.parameters?.retry_after || 5;
@@ -211,12 +246,30 @@ export class TelegramBot {
         await this.delay(retryAfter * 1000);
         return this.sendVideoByUrl(videoUrl, caption, messageThreadId, retryCount + 1);
       }
-      
+      // Fallback: Telegram can't fetch the URL
+      if (
+        errorData?.error_code === 400 &&
+        typeof errorData?.description === 'string' &&
+        errorData.description.includes('failed to get HTTP URL content')
+      ) {
+        try {
+          const videoBuffer = await this.downloadFileBuffer(videoUrl);
+          return await this.sendVideo(videoBuffer, 'video.mp4', caption, messageThreadId);
+        } catch (downloadErr) {
+          console.error('Fallback-Fehler beim Herunterladen des Videos:', downloadErr);
+          return null;
+        }
+      }
       console.error('Fehler beim Senden des Videos per URL:', errorData || error.message);
       return null;
     }
+  /**
+   * Hilfsfunktion: Lädt eine Datei von einer URL als Buffer herunter
+   */
+  async downloadFileBuffer(fileUrl: string): Promise<Buffer> {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data);
   }
-
   /**
    * Liest Topic-Dateien aus Redis-Cache
    * 
@@ -284,8 +337,6 @@ export class TelegramBot {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-
-/**
  * Multi-Bot Manager für parallele Uploads
  * Verteilt Uploads auf mehrere Bots um Rate-Limits zu umgehen
  * 

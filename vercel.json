@@ -6,11 +6,19 @@
     "api/continue-sync.ts": {
       "maxDuration": 300
     },
+    "api/health-monitor.ts": {
+      "maxDuration": 60
+    },
     "api/**/*.ts": {
       "maxDuration": 60
     }
   },
-  "crons": [],
+  "crons": [
+    {
+      "path": "/api/health-monitor",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/",

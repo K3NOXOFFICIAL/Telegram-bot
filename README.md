@@ -18,6 +18,8 @@ Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) au
 - ✅ **Robustes Error Handling**: Fehler stoppen nicht den gesamten Upload-Prozess
 - ✅ **Automatisches Retry**: Bis zu 5 Versuche bei Fehlern mit intelligenter Fehlerbehandlung
 - ✅ **Automatische Fehler-Recovery**: Lock-Management mit automatischer Freigabe bei Fehlern
+- ✅ **🔄 Auto-Restart System**: Überwacht alle Services und startet sie automatisch neu bei Problemen
+- ✅ **🏥 Health Monitoring**: Automatische Erkennung und Behebung von hängenden Syncs, Locks und Timeouts
 - ✅ Automatische Synchronisierung alle 5 Minuten (Cron-Job)
 - ✅ Vercel-kompatibel mit Serverless Functions
 - ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
@@ -219,6 +221,51 @@ Response:
 }
 ```
 
+### GET /api/health-monitor
+
+🔄 **NEU: Auto-Restart & Health Monitoring**
+
+Überwacht System-Status und startet Services automatisch neu bei Problemen. Läuft automatisch alle 5 Minuten via Cron Job.
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/health-monitor" | ConvertFrom-Json
+```
+
+Response (gesund):
+```json
+{
+  "success": true,
+  "health": {
+    "healthy": true,
+    "issues": [],
+    "actions": [],
+    "timestamp": "2025-10-15T12:00:00.000Z"
+  },
+  "message": "Alle Services sind gesund"
+}
+```
+
+Response (mit Auto-Recovery):
+```json
+{
+  "success": false,
+  "health": {
+    "healthy": false,
+    "issues": [
+      "Sync Lock ist 12 Minuten alt (max: 10)"
+    ],
+    "actions": [
+      "Alter Sync Lock wurde automatisch gelöst",
+      "Neuer Sync wurde getriggert"
+    ],
+    "timestamp": "2025-10-15T12:00:00.000Z"
+  },
+  "message": "Probleme erkannt und Auto-Recovery durchgeführt"
+}
+```
+
+**📖 Vollständige Dokumentation:** [AUTO_RESTART.md](./AUTO_RESTART.md)
+
 ### POST /api/sync
 
 Startet eine manuelle Synchronisierung:
@@ -241,6 +288,14 @@ Response:
   "timestamp": "2025-10-13T12:05:00.000Z"
 }
 ```
+
+**📊 Error Logging & Frontend Display:**
+- Umfassendes Error-Logging für alle Sync-Operationen
+- Detaillierte Fehlerstatistiken im `errors` Feld der Response
+- Alle Sync-Daten (inkl. Fehler) werden in Echtzeit im Frontend angezeigt
+- Frontend zeigt JSON-formatierte Response mit allen Details in der Status-Anzeige
+- Automatische Aktualisierung alle 3 Sekunden während ein Sync läuft
+- Fehler werden sowohl in der Konsole geloggt als auch in der API-Response zurückgegeben
 
 ### POST /api/force-unlock
 
