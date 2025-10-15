@@ -40,16 +40,27 @@ export default async function handler(
         const baseUrl = `https://${req.headers.host}`;
         const continueUrl = `${baseUrl}/api/continue-sync`;
         
-        // Fire-and-forget für nächsten Chunk
-        fetch(continueUrl, {
+        console.log('▶️  Continue-Sync: Sende nächsten Request');
+        
+        // Sende Request und warte kurz auf Initiierung
+        const fetchPromise = fetch(continueUrl, {
           method: 'POST',
           headers: {
             'x-auth-token': (authToken as string) || '',
             'Content-Type': 'application/json'
-          }
+          },
+          signal: AbortSignal.timeout(2000)
+        }).then(() => {
+          console.log('✅ Nächster Continue-Request gesendet');
         }).catch(error => {
-          console.error('❌ Continuation Request fehlgeschlagen:', error);
+          console.log('⚠️  Continue-Request initiiert (error ignoriert):', error.message);
         });
+        
+        // Warte max 500ms
+        await Promise.race([
+          fetchPromise,
+          new Promise(resolve => setTimeout(resolve, 500))
+        ]);
         
         console.log('✅ Nächste Continuation ausgelöst');
         

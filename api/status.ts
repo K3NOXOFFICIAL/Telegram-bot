@@ -6,7 +6,15 @@
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateConfig } from '../lib/config';
-import { loadState, getAllTopicMappings, loadSyncStats, getSyncLockStatus, getSyncProgress } from '../lib/store';
+import { 
+  loadState, 
+  getAllTopicMappings, 
+  loadSyncStats, 
+  getSyncLockStatus, 
+  getSyncProgress,
+  getRuntimeSettings,
+  getUploadSpeed
+} from '../lib/store';
 
 export default async function handler(
   req: VercelRequest,
@@ -32,6 +40,8 @@ export default async function handler(
     const syncStats = await loadSyncStats();
     const lockStatus = await getSyncLockStatus();
     const syncProgress = await getSyncProgress();
+    const runtimeSettings = await getRuntimeSettings();
+    const uploadSpeed = await getUploadSpeed();
 
     // Erstelle Status-Response
     const status = {
@@ -41,8 +51,23 @@ export default async function handler(
         valid: validation.valid,
         errors: validation.errors,
         onedriveFolderPath: process.env.ONEDRIVE_FOLDER_PATH || 'nicht gesetzt',
-        rateLimitDelay: process.env.RATE_LIMIT_DELAY || '2000',
+        rateLimitDelay: process.env.RATE_LIMIT_DELAY || '1000',
       },
+      runtimeSettings: {
+        uploadDelay: runtimeSettings.uploadDelay,
+        concurrentFolders: runtimeSettings.concurrentFolders,
+        updatedAt: new Date(runtimeSettings.updatedAt).toISOString(),
+        note: 'Änderbar via POST /api/settings'
+      },
+      uploadSpeed: uploadSpeed ? {
+        current: `${uploadSpeed.currentSpeed.toFixed(2)} files/sec`,
+        average: `${uploadSpeed.averageSpeed.toFixed(2)} files/sec`,
+        currentRaw: uploadSpeed.currentSpeed,
+        averageRaw: uploadSpeed.averageSpeed,
+        totalUploaded: uploadSpeed.totalUploaded,
+        runningSince: new Date(uploadSpeed.startTime).toISOString(),
+        elapsedSeconds: Math.round((Date.now() - uploadSpeed.startTime) / 1000),
+      } : null,
       state: {
         totalPostedFiles: state.postedFiles.length,
         totalTopicMappings: state.topicMappings.length,

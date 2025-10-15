@@ -176,7 +176,7 @@ Deine App ist jetzt live unter: `https://your-project.vercel.app`
 
 ### GET /api/status
 
-Zeigt den aktuellen Bot-Status:
+Zeigt den aktuellen Bot-Status inkl. Upload-Geschwindigkeit und Runtime-Settings:
 
 ```powershell
 Invoke-WebRequest -Uri "https://your-project.vercel.app/api/status" | ConvertFrom-Json
@@ -186,10 +186,23 @@ Response:
 ```json
 {
   "healthy": true,
-  "timestamp": "2025-10-13T12:00:00.000Z",
+  "timestamp": "2025-10-15T12:00:00.000Z",
   "config": {
     "valid": true,
     "errors": []
+  },
+  "runtimeSettings": {
+    "uploadDelay": 1000,
+    "concurrentFolders": 15,
+    "updatedAt": "2025-10-15T12:00:00.000Z",
+    "note": "Änderbar via POST /api/settings"
+  },
+  "uploadSpeed": {
+    "current": "12.50 files/sec",
+    "average": "10.25 files/sec",
+    "totalUploaded": 5000,
+    "runningSince": "2025-10-15T11:00:00.000Z",
+    "elapsedSeconds": 3600
   },
   "state": {
     "totalPostedFiles": 150,
@@ -252,6 +265,79 @@ Response:
   }
 }
 ```
+
+### GET /api/settings
+
+Zeigt aktuelle Runtime-Einstellungen:
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/settings" | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "success": true,
+  "settings": {
+    "uploadDelay": 1000,
+    "concurrentFolders": 15,
+    "updatedAt": 1728993600000
+  }
+}
+```
+
+### POST /api/settings
+
+Ändert Upload-Einstellungen während des laufenden Betriebs:
+
+```powershell
+# Ändere Upload-Delay (100-10000ms)
+$body = @{
+  uploadDelay = 500
+} | ConvertTo-Json
+
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/settings" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body | ConvertFrom-Json
+
+# Ändere Anzahl paralleler Ordner (1-30)
+$body = @{
+  concurrentFolders = 20
+} | ConvertTo-Json
+
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/settings" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body | ConvertFrom-Json
+
+# Ändere beides gleichzeitig
+$body = @{
+  uploadDelay = 800
+  concurrentFolders = 12
+} | ConvertTo-Json
+
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/settings" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "success": true,
+  "settings": {
+    "uploadDelay": 800,
+    "concurrentFolders": 12,
+    "updatedAt": 1728993700000
+  },
+  "message": "Einstellungen erfolgreich aktualisiert",
+  "note": "Änderungen werden beim nächsten Sync-Chunk wirksam"
+}
+```
+
+**Wichtig:** Einstellungsänderungen werden beim nächsten Batch/Chunk wirksam, nicht sofort für laufende Uploads.
 
 ## ⏱️ Automatische Synchronisierung
 
@@ -415,22 +501,26 @@ telegram-onedrive-bot/
 
 **✅ Lösung: Automatisches Chunked Processing (FIXED!)**
 
-Der Bot nutzt **automatisches Chunked Processing mit sofortiger Fortsetzung**:
-- Verarbeitet in 4.2-Minuten-Chunks (unter 5-Min-Limit)
-- **Triggert SOFORT neuen Request BEVOR Response gesendet wird** (Fix für Vercel!)
+Der Bot nutzt **automatisches Chunked Processing mit garantierter Fortsetzung**:
+- Verarbeitet in **3.8-Minuten-Chunks** (deutlich unter 5-Min-Limit!)
+- **Wartet auf Request-Initiierung** bevor Response gesendet wird (Fix für Vercel!)
 - Nutzt separaten `/api/continue-sync` Endpoint für Fortsetzungen
 - Kann beliebig lange Syncs (5-6 Stunden) durchführen
 - **Fehler in einem Ordner stoppen nicht die anderen** (Promise.allSettled)
 - **Automatisches Retry bei Fehlern** (bis zu 5 Versuche)
 - **Lock wird garantiert freigegeben** (auch bei Fehlern)
 
-**Wichtig: Fire-and-Forget Pattern**
+**Wichtig: Garantierte Request-Initiierung**
 ```typescript
-// Neuer Request wird SOFORT getriggert (nicht mit setTimeout!)
-fetch('/api/continue-sync', { method: 'POST' })
-  .catch(error => console.error(error));
+// Request wird gesendet UND wir warten auf Initiierung
+const fetchPromise = fetch('/api/continue-sync', {
+  signal: AbortSignal.timeout(2000)
+});
 
-// Response wird direkt zurückgegeben (kein Warten auf Continuation)
+// Warte max 500ms dass Request gestartet ist
+await Promise.race([fetchPromise, new Promise(r => setTimeout(r, 500))]);
+
+// Jetzt Response senden - Request läuft bereits!
 return res.status(202).json({ needsContinuation: true });
 ```
 
@@ -474,8 +564,8 @@ Invoke-WebRequest -Uri "https://your-project.vercel.app/api/status" | ConvertFro
 3. **Optimierung anpassen:**
    ```typescript
    // In lib/sync.ts
-   const CONCURRENT = 6;        // Mehr parallel = schneller (max 6-8 empfohlen)
-   const MAX_EXECUTION_TIME = 4 * 60 * 1000;  // 4 Min pro Chunk
+   const CONCURRENT = 15;       // Mehr parallel = schneller (empfohlen: 10-15)
+   const MAX_EXECUTION_TIME = 3.8 * 60 * 1000;  // 3.8 Min pro Chunk (sicherer Puffer!)
    const maxRetries = 5;        // Anzahl Retry-Versuche bei Fehlern
    ```
 

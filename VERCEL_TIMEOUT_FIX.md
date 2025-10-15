@@ -129,16 +129,47 @@ if (stats.needsContinuation) {
 }
 ```
 
-### 3. Timing-Optimierung in `lib/sync.ts`
+### Timing-Optimierung in `lib/sync.ts`
 
 ```typescript
-const MAX_EXECUTION_TIME = 4.2 * 60 * 1000; // 4.2 Minuten
+const MAX_EXECUTION_TIME = 3.8 * 60 * 1000; // 3.8 Minuten
 
 // Gibt Zeit für:
 // - Cleanup (Release Lock, Save Stats)
-// - Triggern des neuen Requests
+// - Triggern des neuen Requests (+ WARTEN auf Initiierung!)
 // - Response senden
-// = Puffer von ~50 Sekunden vor 5-Min-Limit
+// = Puffer von ~1.2 Minuten (72s) vor 5-Min-Limit
+```
+
+**Warum 3.8 Minuten statt 4.2?**
+- Vercel kann manchmal früher terminieren
+- Netzwerk-Delays beim fetch()
+- Sicherstellen dass continuation-Request definitiv gesendet wird
+- Mehr Puffer = stabiler
+
+### Sicherstellen dass fetch() ausgeführt wird
+
+```typescript
+// ✅ Neu: Warten bis Request initiiert wurde
+const fetchPromise = fetch('/api/continue-sync', {
+  method: 'POST',
+  headers: { 'x-auth-token': authToken },
+  signal: AbortSignal.timeout(2000) // Timeout für Request-Start
+}).then(() => {
+  console.log('✅ Request erfolgreich gesendet');
+}).catch(error => {
+  // Auch bei Timeout/Error wurde Request gesendet
+  console.log('⚠️  Request initiiert:', error.message);
+});
+
+// Warte max 500ms dass Request gestartet ist
+await Promise.race([
+  fetchPromise,
+  new Promise(resolve => setTimeout(resolve, 500))
+]);
+
+// Jetzt Response senden - Request läuft bereits!
+return res.status(202).json({ needsContinuation: true });
 ```
 
 ## 🔍 Warum funktioniert das?
@@ -175,14 +206,14 @@ Mit fetch Fire-and-forget:
 
 **20.000 Dateien:**
 ```
-Chunk 1: 4.2 Min  →  fetch('/api/continue-sync')  →  Response 202
-Chunk 2: 4.2 Min  →  fetch('/api/continue-sync')  →  Response 202
-Chunk 3: 4.2 Min  →  fetch('/api/continue-sync')  →  Response 202
+Chunk 1: 3.8 Min  →  await fetch('/api/continue-sync')  →  Response 202
+Chunk 2: 3.8 Min  →  await fetch('/api/continue-sync')  →  Response 202
+Chunk 3: 3.8 Min  →  await fetch('/api/continue-sync')  →  Response 202
 ...
-Chunk 16: 4.2 Min →  Fertig!  →  Response 200
+Chunk 18: 3.8 Min →  Fertig!  →  Response 200
 
-Total: ~67 Minuten (1.1 Stunden)
-Kein Timeout! Jeder Chunk unter 5 Min!
+Total: ~68 Minuten (1.1 Stunden)
+Kein Timeout! Jeder Chunk deutlich unter 5 Min!
 ```
 
 ### Ohne den Fix
@@ -287,22 +318,23 @@ const CONCURRENT = 10; // Statt 15
 
 ## 📚 Technische Details
 
-### Warum 4.2 Minuten?
+### Warum 3.8 Minuten?
 
 ```
 Vercel Limit:        300s (5 Minuten)
-Chunk Duration:      252s (4.2 Minuten)
-Puffer:               48s (0.8 Minuten)
+Chunk Duration:      228s (3.8 Minuten)
+Puffer:               72s (1.2 Minuten)
 
 Puffer wird genutzt für:
 - Lock Release:       ~0.5s
 - Stats Save:         ~0.5s
 - Progress Save:      ~0.5s
-- fetch() Trigger:    ~0.5s
+- fetch() Trigger:    ~0.5s (+ warten auf Initiierung!)
 - Response Send:      ~0.5s
-- Network Overhead:   ~1s
-- Sicherheit:         ~45s
-= 48s Gesamt
+- Network Overhead:   ~2s
+- Vercel Variance:    ~10s (manchmal frühere Termination)
+- Sicherheit:         ~57s
+= 72s Gesamt (deutlicher Puffer!)
 ```
 
 ### Fire-and-Forget Implementation

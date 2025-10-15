@@ -774,3 +774,162 @@ export async function getSyncProgress(): Promise<{ currentFolderIndex: number; t
   
   return null;
 }
+
+/**
+ * Runtime Settings Interface
+ */
+export interface RuntimeSettings {
+  uploadDelay: number;
+  concurrentFolders: number;
+  updatedAt: number;
+}
+
+/**
+ * Default Runtime Settings
+ */
+const DEFAULT_SETTINGS: RuntimeSettings = {
+  uploadDelay: 1000,
+  concurrentFolders: 15,
+  updatedAt: Date.now(),
+};
+
+/**
+ * Holt die aktuellen Runtime-Einstellungen
+ */
+export async function getRuntimeSettings(): Promise<RuntimeSettings> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      const settings = await kvStore.get('runtime_settings');
+      if (settings) {
+        return settings;
+      }
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Laden der Settings:', error);
+  }
+  
+  return DEFAULT_SETTINGS;
+}
+
+/**
+ * Aktualisiert die Runtime-Einstellungen
+ */
+export async function updateRuntimeSettings(settings: RuntimeSettings): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      await kvStore.set('runtime_settings', settings);
+      console.log('⚙️ Runtime Settings gespeichert:', settings);
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Speichern der Settings:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upload Speed Tracking Interface
+ */
+export interface UploadSpeedMetrics {
+  currentSpeed: number; // files per second
+  averageSpeed: number; // files per second
+  totalUploaded: number;
+  startTime: number;
+  lastUpdate: number;
+  recentUploads: number[]; // timestamps of recent uploads
+}
+
+/**
+ * Aktualisiert Upload-Speed Metriken
+ */
+export async function updateUploadSpeed(filesUploaded: number = 1): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      const now = Date.now();
+      const metrics: UploadSpeedMetrics = await kvStore.get('upload_speed') || {
+        currentSpeed: 0,
+        averageSpeed: 0,
+        totalUploaded: 0,
+        startTime: now,
+        lastUpdate: now,
+        recentUploads: []
+      };
+      
+      // Füge aktuelle Upload-Timestamps hinzu
+      const uploadTimestamps = Array(filesUploaded).fill(now);
+      metrics.recentUploads.push(...uploadTimestamps);
+      
+      // Behalte nur letzte 60 Sekunden
+      const oneMinuteAgo = now - 60000;
+      metrics.recentUploads = metrics.recentUploads.filter(t => t > oneMinuteAgo);
+      
+      // Berechne aktuelle Geschwindigkeit (letzte 10 Sekunden)
+      const tenSecondsAgo = now - 10000;
+      const recentCount = metrics.recentUploads.filter(t => t > tenSecondsAgo).length;
+      metrics.currentSpeed = recentCount / 10; // per second
+      
+      // Aktualisiere Total
+      metrics.totalUploaded += filesUploaded;
+      metrics.lastUpdate = now;
+      
+      // Berechne Durchschnittsgeschwindigkeit
+      const elapsedSeconds = (now - metrics.startTime) / 1000;
+      metrics.averageSpeed = elapsedSeconds > 0 ? metrics.totalUploaded / elapsedSeconds : 0;
+      
+      await kvStore.set('upload_speed', metrics);
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Aktualisieren der Upload-Speed:', error);
+  }
+}
+
+/**
+ * Holt die aktuellen Upload-Speed Metriken
+ */
+export async function getUploadSpeed(): Promise<UploadSpeedMetrics | null> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      const metrics = await kvStore.get('upload_speed');
+      if (metrics) {
+        // Bereinige alte Uploads
+        const now = Date.now();
+        const oneMinuteAgo = now - 60000;
+        metrics.recentUploads = metrics.recentUploads.filter((t: number) => t > oneMinuteAgo);
+        
+        // Neuberechnung der aktuellen Geschwindigkeit
+        const tenSecondsAgo = now - 10000;
+        const recentCount = metrics.recentUploads.filter((t: number) => t > tenSecondsAgo).length;
+        metrics.currentSpeed = recentCount / 10;
+        
+        return metrics;
+      }
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Laden der Upload-Speed:', error);
+  }
+  
+  return null;
+}
+
+/**
+ * Setzt Upload-Speed Metriken zurück
+ */
+export async function resetUploadSpeed(): Promise<void> {
+  await initializeStore();
+  
+  try {
+    if (kvStore) {
+      await kvStore.del('upload_speed');
+      console.log('🗑️  Upload-Speed Metriken zurückgesetzt');
+    }
+  } catch (error) {
+    console.error('❌ Fehler beim Zurücksetzen der Upload-Speed:', error);
+  }
+}

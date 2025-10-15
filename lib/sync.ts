@@ -268,13 +268,20 @@ async function processFolderParallel(
   onedrive: OneDriveClient,
   bot: TelegramBot,
   topicManager: TopicManager,
-  config: BotConfig
+  config: BotConfig,
+  runtimeSettings?: { uploadDelay: number; concurrentFolders: number }
 ): Promise<{ filesFound: number; filesPosted: number; errors: number }> {
   const localStats = {
     filesFound: 0,
     filesPosted: 0,
     errors: 0
   };
+
+  // Lade updateUploadSpeed Funktion
+  const { updateUploadSpeed } = await import('./store');
+  
+  // Verwende Runtime-Settings oder Fallback
+  const uploadDelay = runtimeSettings?.uploadDelay || 1000;
 
   try {
     const folderStartTime = Date.now();
@@ -398,6 +405,14 @@ async function processFolderParallel(
           }
           
           localStats.filesPosted++;
+          
+          // Aktualisiere Upload-Speed Metriken
+          try {
+            await updateUploadSpeed(1);
+          } catch (speedError) {
+            // Nicht kritisch
+          }
+          
           console.log(`   ✅ [${folder.name}] ${file.name}`);
         } else {
           console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen nach ${maxRetries} Versuchen: ${file.name}`);
@@ -408,9 +423,9 @@ async function processFolderParallel(
           // Weiter mit nächster Datei - nicht abbrechen!
         }
 
-        // Rate limiting: 1s base delay + processing overhead keeps us under limits
+        // Rate limiting: Verwende Runtime-Settings
         // Retry logic handles any 429 errors gracefully
-        await bot.delay(1000);
+        await bot.delay(uploadDelay);
 
       } catch (fileError: any) {
         console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);
@@ -439,12 +454,24 @@ async function processFolderParallel(
  */
 export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise<SyncStats> {
   const startTime = Date.now();
-  const MAX_EXECUTION_TIME = 4.2 * 60 * 1000; // 4.2 Minuten (Puffer für Cleanup + neue Request)
+  const MAX_EXECUTION_TIME = 3.8 * 60 * 1000; // 3.8 Minuten (deutlicher Puffer: 1.2 Min für Cleanup + neue Request)
   
   // Versuche vorherige Stats zu laden
-  const { loadSyncStats, saveSyncStats, getSyncProgress, saveSyncProgress } = await import('./store');
+  const { 
+    loadSyncStats, 
+    saveSyncStats, 
+    getSyncProgress, 
+    saveSyncProgress,
+    getRuntimeSettings,
+    updateUploadSpeed,
+    resetUploadSpeed
+  } = await import('./store');
   const previousStats = await loadSyncStats();
   const progress = await getSyncProgress();
+  
+  // Lade Runtime-Einstellungen (dynamisch änderbar!)
+  const runtimeSettings = await getRuntimeSettings();
+  console.log(`⚙️ Runtime Settings: ${runtimeSettings.uploadDelay}ms delay, ${runtimeSettings.concurrentFolders} concurrent`);
   
   const stats: SyncStats = previousStats || {
     foldersScanned: 0,
@@ -457,6 +484,8 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
   // Setze Startzeit nur wenn neue Session
   if (!previousStats) {
     (stats as any).startTime = startTime;
+    // Reset upload speed für neue Session
+    await resetUploadSpeed();
   }
 
   try {
@@ -488,10 +517,12 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       return stats;
     }
 
-    // PARALLEL: 15 Ordner gleichzeitig (MAXIMUM SPEED!)
-    // Processing overhead + 1s delays keep us within Telegram limits
+    // PARALLEL: Verwende Runtime-Einstellungen (dynamisch änderbar!)
+    // Processing overhead + delays keep us within Telegram limits
     // Automatic retry logic handles any rare 429 errors
-    const CONCURRENT = 15;
+    const CONCURRENT = runtimeSettings.concurrentFolders;
+    console.log(`📊 Verarbeite ${CONCURRENT} Ordner parallel`);
+    
     const startIndex = progress?.currentFolderIndex || 0;
     let needsContinuation = false;
     
@@ -516,7 +547,7 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       // Verwende allSettled statt all - Fehler in einem Ordner stoppen nicht die anderen
       const batchPromises = await Promise.allSettled(
         batch.map(folder => 
-          processFolderParallel(folder, onedrive, bot, topicManager, config)
+          processFolderParallel(folder, onedrive, bot, topicManager, config, runtimeSettings)
         )
       );
       

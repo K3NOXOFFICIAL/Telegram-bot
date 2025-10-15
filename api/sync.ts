@@ -58,27 +58,36 @@ export default async function handler(
     if ((stats as any).needsContinuation) {
       console.log('🔄 Sync benötigt Fortsetzung - triggere neuen Request...');
       
-      // Triggere SOFORT einen neuen Request über /api/continue-sync
-      // Dies ist kritisch für Vercel Serverless - setTimeout funktioniert nicht!
+      // Triggere continuation request und WARTE darauf dass er gesendet wurde
+      // (nicht auf Response, nur auf Request-Start)
       try {
         const baseUrl = `https://${req.headers.host}`;
         const continueUrl = `${baseUrl}/api/continue-sync`;
         
-        console.log('▶️  Auto-Continue: Starte nächsten Chunk sofort...');
+        console.log('▶️  Auto-Continue: Sende Request an', continueUrl);
         
-        // Fire-and-forget Request - warte NICHT auf Response
-        fetch(continueUrl, {
+        // Sende Request und warte bis er initiiert wurde (aber nicht auf Response!)
+        const fetchPromise = fetch(continueUrl, {
           method: 'POST',
           headers: {
             'x-auth-token': (authToken as string) || '',
             'Content-Type': 'application/json'
-          }
+          },
+          signal: AbortSignal.timeout(2000) // 2s timeout für Request-Start
+        }).then(() => {
+          console.log('✅ Auto-Continue Request erfolgreich gesendet');
         }).catch(error => {
-          // Log error but don't block
-          console.error('❌ Auto-Continue Request fehlgeschlagen:', error);
+          // Timeout oder andere Fehler sind OK - Request wurde gesendet
+          console.log('⚠️  Auto-Continue Request initiiert (error ignoriert):', error.message);
         });
         
-        console.log('✅ Auto-Continue Request gesendet');
+        // Warte kurz um sicherzustellen dass Request gesendet wurde
+        await Promise.race([
+          fetchPromise,
+          new Promise(resolve => setTimeout(resolve, 500)) // Max 500ms warten
+        ]);
+        
+        console.log('✅ Continuation getriggert, sende Response');
         
       } catch (error) {
         console.error('❌ Fehler bei Auto-Continue Trigger:', error);
