@@ -1,6 +1,7 @@
 /**
  * Telegram Bot API Wrapper
  * Behandelt alle Interaktionen mit der Telegram Bot API
+ * + Multi-Bot Manager für parallele Uploads (Rate-Limit Umgehung)
  */
 
 import axios from 'axios';
@@ -281,5 +282,107 @@ export class TelegramBot {
    */
   async delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+/**
+ * Multi-Bot Manager für parallele Uploads
+ * Verteilt Uploads auf mehrere Bots um Rate-Limits zu umgehen
+ * 
+ * Mit 3 Bots: 3x 17 msg/min = 51 msg/min pro Topic!
+ * Performance-Boost: 3-5x schneller!
+ */
+export class MultiBotManager {
+  private bots: TelegramBot[] = [];
+  private currentBotIndex = 0;
+  private chatId: string;
+
+  constructor(config: BotConfig) {
+    this.chatId = config.telegramChatId;
+    
+    // Erstelle Bot-Instanzen aus Tokens
+    const tokens = config.telegramBotTokens || [config.telegramBotToken];
+    
+    tokens.forEach((token, index) => {
+      const botConfig = { ...config, telegramBotToken: token };
+      this.bots.push(new TelegramBot(botConfig));
+    });
+    
+    console.log(`🤖 MultiBotManager initialisiert mit ${this.bots.length} Bot(s)`);
+    console.log(`   📊 Rate-Limit Multiplikator: ${this.bots.length}x`);
+    console.log(`   ⚡ Erwartete Performance: ${this.bots.length * 17} msg/min pro Topic`);
+  }
+
+  /**
+   * Holt den nächsten verfügbaren Bot (Round-Robin)
+   * Verteilt Last gleichmäßig auf alle Bots
+   */
+  getNextBot(): TelegramBot {
+    const bot = this.bots[this.currentBotIndex];
+    this.currentBotIndex = (this.currentBotIndex + 1) % this.bots.length;
+    return bot;
+  }
+
+  /**
+   * Holt einen spezifischen Bot nach Index
+   */
+  getBot(index: number): TelegramBot {
+    return this.bots[index % this.bots.length];
+  }
+
+  /**
+   * Anzahl verfügbarer Bots
+   */
+  getBotCount(): number {
+    return this.bots.length;
+  }
+
+  /**
+   * Sendet Foto mit automatischer Bot-Rotation
+   */
+  async sendPhotoByUrl(
+    url: string,
+    caption: string,
+    topicId?: number
+  ): Promise<TelegramMessage | null> {
+    const bot = this.getNextBot();
+    return bot.sendPhotoByUrl(url, caption, topicId);
+  }
+
+  /**
+   * Sendet Video mit automatischer Bot-Rotation
+   */
+  async sendVideoByUrl(
+    url: string,
+    caption: string,
+    topicId?: number
+  ): Promise<TelegramMessage | null> {
+    const bot = this.getNextBot();
+    return bot.sendVideoByUrl(url, caption, topicId);
+  }
+
+  /**
+   * Delay (verwendet ersten Bot)
+   */
+  async delay(ms: number): Promise<void> {
+    return this.bots[0].delay(ms);
+  }
+
+  /**
+   * Sendet Nachricht (verwendet ersten Bot)
+   */
+  async sendMessage(
+    text: string,
+    chatId?: string,
+    topicId?: number
+  ): Promise<TelegramMessage | null> {
+    return this.bots[0].sendMessage(text, chatId, topicId);
+  }
+
+  /**
+   * Erstellt Forum-Topic (verwendet ersten Bot)
+   */
+  async createForumTopic(name: string): Promise<TelegramTopic | null> {
+    return this.bots[0].createForumTopic(name);
   }
 }

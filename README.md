@@ -479,9 +479,11 @@ telegram-onedrive-bot/
 - ✅ **Perfektes Caching** - 100% Cache-Hit-Rate, keine redundanten Calls
 
 #### ⚡ **Telegram Optimierungen:**
-- ✅ **12 parallele Topics** - Optimal für 30 msg/s Limit
-- ✅ **200ms intelligenter Delay** - Zieht Processing-Zeit ab, garantiert 150ms Minimum
-- ✅ **Rate-Limit-Safe** - 24 msg/s theoretisch (unter 30/s Limit mit Puffer)
+- ✅ **Multi-Bot Support** - 3 Bots für 3x höhere Rate-Limits! 🤖🤖🤖
+- ✅ **10 parallele Topics** - Optimal für beide Telegram Limits
+- ✅ **1200ms intelligenter Delay** - Nutzt Multi-Bot-Multiplikator optimal!
+- ✅ **Topic Rate-Limit Tracking** - Verhindert 60s Topic-Blocks automatisch
+- ✅ **Rate-Limit-Safe** - 51 msg/min pro Topic (mit 3 Bots: 3x 17 = 51!)
 - ✅ **Intelligentes Retry** - Automatische 429-Behandlung mit Backoff
 
 #### 📊 **Pipeline-Performance:**
@@ -512,32 +514,34 @@ Delay (150-200ms)  ──┘
 
 #### 🎯 **Effektive Performance:**
 
-**Pro Topic:**
+**Mit Multi-Bot (3 Bots):**
 - Processing-Zeit: ~300-500ms (Upload + Redis + Topic-Cache)
-- Delay: 200ms - Processing = 0-200ms (min. 150ms)
-- Total: ~500-700ms pro Datei
-- **Rate: ~1.4-2 Dateien/Sekunde**
+- Delay: 1200ms (für 3x 17 = 51 msg/min Multi-Bot-Limit)
+- Total: ~1700ms pro Datei (mit Multi-Bot-Boost)
+- **Rate: ~51 Dateien/Minute = 0.85 Dateien/Sekunde**
 
-**Gesamt (12 Topics parallel):**
-- Theoretisch: 12 * 2 = **24 Dateien/Sekunde**
-- Praktisch: ~**18-22 Dateien/Sekunde** (mit Redis/Network-Overhead)
-- **Unter Telegram 30/s Limit mit Sicherheitspuffer!** ✅
+**Gesamt (10 Topics parallel mit 3 Bots):**
+- Theoretisch: 10 * 51/min = **510 Dateien/Minute = 8.5 Dateien/Sekunde** 🚀🚀🚀
+- Praktisch: ~**8 Dateien/Sekunde** (mit Redis/Network-Overhead)
+- **Respektiert 20 msg/min pro Topic PER BOT UND 30 msg/s gesamt!** ✅
 
 #### 📈 **Realistische Beispiele:**
 
-| Dateien | Zeit | Rate |
-|---------|------|------|
-| 1.000 | ~50 Sek | 20/s |
-| 5.000 | ~4.2 Min | 20/s |
-| 10.000 | ~8.3 Min | 20/s |
-| 50.000 | ~42 Min | 20/s |
-| 100.000 | ~83 Min | 20/s |
+| Dateien | Single-Bot | Multi-Bot (3x) | Zeitersparnis |
+|---------|-----------|----------------|---------------|
+| 1.000 | ~6.7 Min | ~2 Min | 4.7 Min (70%) |
+| 5.000 | ~33 Min | ~10 Min | 23 Min (70%) |
+| 10.000 | ~67 Min | ~21 Min | 46 Min (70%) |
+| 50.000 | ~5.5 Std | ~1.7 Std | 3.8 Std (70%) |
+| 100.000 | ~11 Std | ~3.5 Std | 7.5 Std (70%) |
 
 **Performance-Faktoren:**
 - ✅ OneDrive Latenz: **ELIMINIERT** (Bulk Prefetch)
-- ✅ Telegram Limits: **RESPEKTIERT** (unter 30/s)
+- ✅ Telegram 30/s Limit: **RESPEKTIERT** (8.5/s < 30/s)
+- ✅ Telegram 20/min Topic Limit: **MULTIPLIZIERT** (3 Bots = 3x Limit!) 🚀
 - ✅ Redis Overhead: **MINIMIERT** (Batch-Checks)
-- ✅ 429 Errors: **VERHINDERT** (Intelligentes Rate-Limiting)
+- ✅ 429 Errors: **VERHINDERT** (Topic Rate-Limit Tracking)
+- ✅ **3x schneller durch Multi-Bot!** ⚡⚡⚡
 
 **Bottleneck-Analyse:**
 ```

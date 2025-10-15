@@ -84,6 +84,7 @@ export interface BotState {
 // Konfigurationstyp
 export interface BotConfig {
   telegramBotToken: string;
+  telegramBotTokens?: string[]; // Neu: Array von Bot-Tokens für Multi-Bot-Upload
   telegramChatId: string;
   microsoftClientId: string;
   microsoftClientSecret: string;

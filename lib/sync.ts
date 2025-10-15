@@ -1,10 +1,11 @@
 /**
  * Hauptsynchronisierungslogik
  * Koordiniert OneDrive-Überwachung und Telegram-Posts
+ * Unterstützt Multi-Bot-Upload für höhere Rate-Limits
  */
 
 import { OneDriveClient } from './onedrive';
-import { TelegramBot } from './bot';
+import { TelegramBot, MultiBotManager } from './bot';
 import { TopicManager } from './topicManager';
 import { isFilePosted, markFileAsPosted, acquireSyncLock, releaseSyncLock } from './store';
 import { BotConfig, OneDriveItem } from './types';
@@ -46,7 +47,7 @@ export async function syncOneDriveToTelegram(config: BotConfig): Promise<SyncSta
 
     // Initialisiere Clients
     const onedrive = new OneDriveClient(config);
-    const bot = new TelegramBot(config);
+    const bot = new MultiBotManager(config); // Multi-Bot statt Single-Bot!
     const topicManager = new TopicManager(bot);
 
     // Hole alle Unterordner aus dem konfigurierten OneDrive-Pfad
@@ -230,7 +231,7 @@ export async function processFile(
 ): Promise<boolean> {
   try {
     const onedrive = new OneDriveClient(config);
-    const bot = new TelegramBot(config);
+    const bot = new MultiBotManager(config); // Multi-Bot statt Single-Bot!
 
     // Prüfe, ob bereits gepostet
     if (await isFilePosted(file.id)) {
@@ -267,7 +268,7 @@ export async function processFile(
 async function processFolderParallel(
   folder: { id: string; name: string; path: string },
   onedrive: OneDriveClient,
-  bot: TelegramBot,
+  bot: MultiBotManager, // Multi-Bot!
   topicManager: TopicManager,
   config: BotConfig,
   runtimeSettings?: { uploadDelay: number; concurrentFolders: number }
@@ -342,9 +343,35 @@ async function processFolderParallel(
 
     // 🚀 OPTIMIERUNG 2: Verarbeite Dateien mit intelligentem Delay
     // Alle URLs sind bereits gecached - kein Warten auf OneDrive!
+    // WICHTIG: Tracking für 20 msg/min Topic-Limit
+    const topicMessageTimestamps: number[] = [];
+    const TOPIC_RATE_LIMIT_WINDOW = 60 * 1000; // 60 Sekunden
+    const TOPIC_RATE_LIMIT_MAX = 20; // Max 20 Messages pro Minute pro Topic
+    
     for (let i = 0; i < mediaFiles.length; i++) {
       const file = mediaFiles[i];
       const uploadStartTime = Date.now();
+      
+      // Prüfe Topic Rate Limit (20 msg/min)
+      const now = Date.now();
+      // Entferne alte Timestamps (älter als 60s)
+      while (topicMessageTimestamps.length > 0 && topicMessageTimestamps[0] < now - TOPIC_RATE_LIMIT_WINDOW) {
+        topicMessageTimestamps.shift();
+      }
+      
+      // Wenn wir das Limit erreichen, warte bis älteste Message aus dem Window fällt
+      if (topicMessageTimestamps.length >= TOPIC_RATE_LIMIT_MAX) {
+        const oldestTimestamp = topicMessageTimestamps[0];
+        const waitTime = (oldestTimestamp + TOPIC_RATE_LIMIT_WINDOW) - now;
+        if (waitTime > 0) {
+          console.log(`   ⏳ [${folder.name}] Topic Rate Limit erreicht (${TOPIC_RATE_LIMIT_MAX}/min) - warte ${Math.ceil(waitTime/1000)}s`);
+          await bot.delay(waitTime + 100); // +100ms Puffer
+          // Cleanup nach Warten
+          while (topicMessageTimestamps.length > 0 && topicMessageTimestamps[0] < Date.now() - TOPIC_RATE_LIMIT_WINDOW) {
+            topicMessageTimestamps.shift();
+          }
+        }
+      }
 
       try {
         // Prüfe 1: Redis File-ID Check (wurde bereits hochgeladen?)
@@ -456,7 +483,10 @@ async function processFolderParallel(
             // Nicht kritisch
           }
           
-          console.log(`   ✅ [${folder.name}] ${file.name}`);
+          // Tracking für Topic Rate Limit
+          topicMessageTimestamps.push(Date.now());
+          
+          console.log(`   ✅ [${folder.name}] ${file.name} (${topicMessageTimestamps.length} msg in letzter Minute)`);
         } else {
           console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen nach ${maxRetries} Versuchen: ${file.name}`);
           if (lastError) {
@@ -466,14 +496,19 @@ async function processFolderParallel(
           // Weiter mit nächster Datei - nicht abbrechen!
         }
 
-        // 🚀 OPTIMIERUNG 3: Intelligenter Delay mit Minimum-Sicherheit
-        // Zieht Processing-Zeit ab, aber garantiert Minimum-Delay gegen 429
+        // 🚀 OPTIMIERUNG 3: Intelligenter Delay mit Topic-Limit-Schutz
+        // Zieht Processing-Zeit ab, aber garantiert Minimum für 20 msg/min Topic-Limit
         const processingTime = Date.now() - uploadStartTime;
-        const MINIMUM_DELAY = 150; // Absolute Minimum-Sicherheit gegen Rate Limits
+        const MINIMUM_DELAY = 3000; // 3 Sekunden Minimum für 20 msg/min Limit (60s / 20 = 3s)
         const targetDelay = Math.max(MINIMUM_DELAY, uploadDelay - processingTime);
         
         if (targetDelay > 0) {
           await bot.delay(targetDelay);
+        }
+        
+        // Warnung wenn Processing sehr langsam war
+        if (processingTime > 10000) {
+          console.log(`   ⚠️  [${folder.name}] Langsamer Upload (${(processingTime/1000).toFixed(1)}s) - große Datei?`);
         }
 
       } catch (fileError: any) {
@@ -552,7 +587,7 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     }
 
     const onedrive = new OneDriveClient(config);
-    const bot = new TelegramBot(config);
+    const bot = new MultiBotManager(config); // Multi-Bot statt Single-Bot!
     const topicManager = new TopicManager(bot);
 
     const folders = await onedrive.listSubfolders(config.onedriveFolderPath);

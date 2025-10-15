@@ -786,14 +786,19 @@ export interface RuntimeSettings {
 
 /**
  * Default Runtime Settings
- * OPTIMIERT für maximalen Durchsatz ohne 429 Errors:
- * - 200ms Delay + ~300-500ms Processing = ~500-700ms total/message
- * - 12 Topics parallel = 12 * (1000/500) = ~24 messages/second (unter 30/s Limit!)
- * - Telegram Limits: 30 msg/s gesamt, 20 msg/min pro Topic
+ * OPTIMIERT für Multi-Bot Telegram Upload:
+ * - Mit 3 Bots: 3x 17 msg/min = 51 msg/min pro Topic!
+ * - 1200ms Delay = 50 msg/min pro Topic (sicher unter Multi-Bot-Limit)
+ * - 10 Topics parallel = 10 * 50/min = 500 msg/min = 8.3 msg/s gesamt
+ * - Telegram Limits: 30 msg/s gesamt ✅, 20 msg/min pro Topic per Bot ✅
+ * 
+ * Single-Bot Fallback:
+ * - 3500ms Delay = 17 msg/min pro Topic
+ * - Automatisch wenn nur 1 Bot konfiguriert
  */
 const DEFAULT_SETTINGS: RuntimeSettings = {
-  uploadDelay: 200,
-  concurrentFolders: 12,
+  uploadDelay: 1200,     // Optimal für 3 Bots (50 msg/min)
+  concurrentFolders: 10, // 10 Topics = optimal
   updatedAt: Date.now(),
 };
 

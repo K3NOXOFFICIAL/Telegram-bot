@@ -1,9 +1,10 @@
 /**
  * Topic Manager
  * Verwaltet Telegram Topics und deren Zuordnung zu OneDrive-Ordnern
+ * Unterstützt sowohl TelegramBot als auch MultiBotManager
  */
 
-import { TelegramBot } from './bot';
+import { TelegramBot, MultiBotManager } from './bot';
 import { getTopicMapping, saveTopicMapping } from './store';
 import { TopicMapping } from './types';
 
@@ -11,7 +12,7 @@ import { TopicMapping } from './types';
  * Topic Manager Klasse
  */
 export class TopicManager {
-  constructor(private bot: TelegramBot) {}
+  constructor(private bot: TelegramBot | MultiBotManager) {}
 
   /**
    * Holt oder erstellt ein Topic für einen Ordner
