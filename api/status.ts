@@ -51,7 +51,7 @@ export default async function handler(
         valid: validation.valid,
         errors: validation.errors,
         onedriveFolderPath: process.env.ONEDRIVE_FOLDER_PATH || 'nicht gesetzt',
-        rateLimitDelay: process.env.RATE_LIMIT_DELAY || '1000',
+        rateLimitDelay: process.env.RATE_LIMIT_DELAY || '100',
       },
       runtimeSettings: {
         uploadDelay: runtimeSettings.uploadDelay,
