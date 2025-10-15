@@ -261,6 +261,7 @@ export async function processFile(
 
 /**
  * Verarbeitet einen Ordner (Helper für parallele Verarbeitung)
+ * Mit robustem Error Handling - Fehler stoppen nicht den gesamten Prozess
  */
 async function processFolderParallel(
   folder: { id: string; name: string; path: string },
@@ -330,13 +331,15 @@ async function processFolderParallel(
 
         const downloadUrl = await onedrive.getDownloadUrl(file.id);
         if (!downloadUrl) {
+          console.error(`   ❌ [${folder.name}] Keine Download-URL für ${file.name}`);
           localStats.errors++;
-          continue;
+          continue; // Weiter mit nächster Datei
         }
 
         let message;
         let retryCount = 0;
-        const maxRetries = 3;
+        const maxRetries = 5; // Erhöht von 3 auf 5
+        let lastError: any = null;
 
         while (retryCount < maxRetries) {
           try {
@@ -347,20 +350,41 @@ async function processFolderParallel(
             }
             break; // Erfolgreich
           } catch (sendError: any) {
+            lastError = sendError;
+            retryCount++;
+            
+            // Rate Limit Error - warte und versuche erneut
             if (sendError?.error_code === 429) {
               const retryAfter = sendError?.parameters?.retry_after || 10;
-              console.log(`   ⏳ [${folder.name}] Rate limit - warte ${retryAfter}s (Versuch ${retryCount + 1}/${maxRetries})`);
+              console.log(`   ⏳ [${folder.name}] Rate limit - warte ${retryAfter}s (Versuch ${retryCount}/${maxRetries})`);
               await bot.delay(retryAfter * 1000);
-              retryCount++;
-            } else {
-              throw sendError;
+            } 
+            // Timeout Error - warte kurz und versuche erneut
+            else if (sendError?.message?.includes('timeout') || sendError?.code === 'ETIMEDOUT') {
+              console.log(`   ⏳ [${folder.name}] Timeout - warte 5s (Versuch ${retryCount}/${maxRetries})`);
+              await bot.delay(5000);
+            }
+            // Network Error - warte und versuche erneut
+            else if (sendError?.code === 'ECONNRESET' || sendError?.code === 'ENOTFOUND') {
+              console.log(`   ⏳ [${folder.name}] Netzwerkfehler - warte 10s (Versuch ${retryCount}/${maxRetries})`);
+              await bot.delay(10000);
+            }
+            // Andere Fehler - logge und breche ab
+            else {
+              console.error(`   ❌ [${folder.name}] Fehler beim Upload (${sendError?.error_code || sendError?.code}): ${sendError?.description || sendError?.message}`);
+              break; // Kein Retry bei unbekannten Fehlern
             }
           }
         }
 
         if (message) {
-          // Speichere in Redis file:ID
-          await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
+          // Speichere in Redis file:ID mit Error Handling
+          try {
+            await markFileAsPosted(file.id, file.name, folder.name, message.message_id);
+          } catch (markError) {
+            console.error(`   ⚠️  [${folder.name}] Konnte file:ID nicht speichern (Upload erfolgreich):`, markError);
+            // Nicht kritisch, versuche topic_files trotzdem
+          }
           
           // Füge Dateiname auch zur Topic-Files-Liste hinzu
           try {
@@ -376,28 +400,35 @@ async function processFolderParallel(
           localStats.filesPosted++;
           console.log(`   ✅ [${folder.name}] ${file.name}`);
         } else {
-          console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen: ${file.name}`);
+          console.error(`   ❌ [${folder.name}] Upload fehlgeschlagen nach ${maxRetries} Versuchen: ${file.name}`);
+          if (lastError) {
+            console.error(`   ❌ [${folder.name}] Letzter Fehler:`, lastError?.description || lastError?.message);
+          }
           localStats.errors++;
+          // Weiter mit nächster Datei - nicht abbrechen!
         }
 
         // Telegram Limit: 20 msg/min pro Chat = 3s zwischen msgs
         // Bei 6 parallelen Topics = 30 msg/sec insgesamt (Max!)
         await bot.delay(3000);
 
-      } catch (fileError) {
-        console.error(`   ❌ [${folder.name}] ${file.name}:`, fileError);
+      } catch (fileError: any) {
+        console.error(`   ❌ [${folder.name}] Fehler bei ${file.name}:`, fileError?.message || fileError);
         localStats.errors++;
+        // Weiter mit nächster Datei - nicht abbrechen!
+        continue;
       }
     }
 
     const folderDuration = ((Date.now() - folderStartTime) / 1000).toFixed(1);
     const timestamp2 = new Date().toLocaleTimeString('de-DE');
-    console.log(`✅ [${timestamp2}] [${folder.name}] Fertig (${localStats.filesPosted} gepostet in ${folderDuration}s)`);
+    console.log(`✅ [${timestamp2}] [${folder.name}] Fertig (${localStats.filesPosted}/${mediaFiles.length} gepostet, ${localStats.errors} Fehler in ${folderDuration}s)`);
     return localStats;
 
-  } catch (folderError) {
-    console.error(`❌ [${folder.name}] Ordner-Fehler:`, folderError);
+  } catch (folderError: any) {
+    console.error(`❌ [${folder.name}] Kritischer Ordner-Fehler:`, folderError?.message || folderError);
     localStats.errors++;
+    // Gebe Stats zurück, damit andere Ordner weiterlaufen
     return localStats;
   }
 }
@@ -482,11 +513,23 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       console.log(`   📂 ${batch.map(f => f.name).join(' | ')}`);
       
       const batchStartTime = Date.now();
-      const batchResults = await Promise.all(
+      // Verwende allSettled statt all - Fehler in einem Ordner stoppen nicht die anderen
+      const batchPromises = await Promise.allSettled(
         batch.map(folder => 
           processFolderParallel(folder, onedrive, bot, topicManager, config)
         )
       );
+      
+      // Extrahiere Results und logge Fehler
+      const batchResults = batchPromises.map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        } else {
+          console.error(`❌ Batch ${batchNum} - Ordner ${batch[index].name} komplett fehlgeschlagen:`, result.reason);
+          return { filesFound: 0, filesPosted: 0, errors: 1 };
+        }
+      });
+      
       const batchDuration = ((Date.now() - batchStartTime) / 1000).toFixed(1);
 
       // Aggregiere Statistiken
@@ -503,12 +546,17 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
       console.log(`   📊 Batch: ${batchFilesPosted} Dateien gepostet`);
       console.log(`   📊 Gesamt: ${stats.filesPosted} von ${stats.filesFound} Dateien (${stats.errors} Fehler)`);
       
-      // Speichere Stats nach jedem Batch
-      await saveSyncStats({
-        ...stats,
-        lastUpdate: Date.now(),
-        isRunning: true
-      });
+      // Speichere Stats nach jedem Batch mit Error Handling
+      try {
+        await saveSyncStats({
+          ...stats,
+          lastUpdate: Date.now(),
+          isRunning: true
+        });
+      } catch (saveError) {
+        console.error('⚠️  Konnte Stats nicht speichern (nicht kritisch):', saveError);
+        // Weiter mit Upload - Stats sind nicht kritisch
+      }
     }
 
     stats.duration = Date.now() - startTime;
@@ -557,20 +605,32 @@ export async function syncOneDriveToTelegramParallel(config: BotConfig): Promise
     await releaseSyncLock();
     return stats;
 
-  } catch (error) {
-    console.error('❌ Kritischer Fehler:', error);
+  } catch (error: any) {
+    console.error('❌ Kritischer Fehler:', error?.message || error);
     stats.errors++;
     stats.duration = Date.now() - startTime;
     
-    // Speichere Stats im Fehlerfall
-    await saveSyncStats({
-      ...stats,
-      lastUpdate: Date.now(),
-      isRunning: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
+    // Speichere Stats im Fehlerfall (mit Error Handling)
+    try {
+      await saveSyncStats({
+        ...stats,
+        lastUpdate: Date.now(),
+        isRunning: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } catch (saveError) {
+      console.error('⚠️  Konnte Stats im Fehlerfall nicht speichern:', saveError);
+    }
     
-    await releaseSyncLock();
-    throw error;
+    // Garantiere Lock-Freigabe mit Error Handling
+    try {
+      await releaseSyncLock();
+    } catch (lockError) {
+      console.error('⚠️  Konnte Lock nicht freigeben:', lockError);
+    }
+    
+    // Werfe Fehler NICHT weiter - erlaube Fortsetzung
+    console.log('🔄 Fehler geloggt - Sync kann fortgesetzt werden');
+    return stats;
   }
 }

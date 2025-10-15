@@ -153,6 +153,7 @@ export async function isFilePosted(fileId: string): Promise<boolean> {
 
 /**
  * Markiert eine Datei als gepostet
+ * Mit robustem Error Handling und Retry-Logik
  */
 export async function markFileAsPosted(
   fileId: string,
@@ -173,14 +174,25 @@ export async function markFileAsPosted(
   let redisSuccess = false;
   let stateSuccess = false;
 
-  // Versuch 1: Speichere in Redis
+  // Versuch 1: Speichere in Redis (primär)
   try {
     if (kvStore) {
       await kvStore.set(`file:${fileId}`, postedFile);
       redisSuccess = true;
     }
-  } catch (error) {
-    console.error('❌ Fehler beim Markieren der Datei in Redis:', error);
+  } catch (error: any) {
+    console.error('❌ Fehler beim Markieren in Redis:', error?.message || error);
+    // Retry nach kurzer Pause
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (kvStore) {
+        await kvStore.set(`file:${fileId}`, postedFile);
+        redisSuccess = true;
+        console.log('✅ Redis-Speicherung erfolgreich (2. Versuch)');
+      }
+    } catch (retryError: any) {
+      console.error('❌ Redis-Speicherung fehlgeschlagen (2. Versuch):', retryError?.message || retryError);
+    }
   }
 
   // Versuch 2: Speichere in bot_state (Fallback)
@@ -195,13 +207,21 @@ export async function markFileAsPosted(
     } else {
       stateSuccess = true; // Bereits vorhanden = Erfolg
     }
-  } catch (error) {
-    console.error('❌ Fehler beim Speichern in bot_state:', error);
+  } catch (error: any) {
+    console.error('❌ Fehler beim Speichern in bot_state:', error?.message || error);
   }
 
   // Mindestens eine Speichermethode muss erfolgreich sein
   if (!redisSuccess && !stateSuccess) {
     throw new Error(`Konnte Datei ${fileName} nicht als gepostet markieren`);
+  }
+  
+  if (redisSuccess && stateSuccess) {
+    // Beide erfolgreich - ideal
+  } else if (redisSuccess) {
+    console.log(`⚠️  Datei nur in Redis gespeichert (bot_state Fehler)`);
+  } else if (stateSuccess) {
+    console.log(`⚠️  Datei nur in bot_state gespeichert (Redis Fehler)`);
   }
 }
 
@@ -578,6 +598,7 @@ export async function resetStore(): Promise<void> {
 /**
  * Versucht einen Sync-Lock zu erhalten
  * Verhindert, dass mehrere Deployments gleichzeitig synchronisieren
+ * Mit automatischer Fehler-Recovery
  */
 export async function acquireSyncLock(): Promise<boolean> {
   await initializeStore();
@@ -591,7 +612,8 @@ export async function acquireSyncLock(): Promise<boolean> {
   try {
     const lockKey = 'sync_lock';
     const now = Date.now();
-    const lockTimeout = 5 * 60 * 1000; // 5 Minuten (reduziert von 30)
+    const lockTimeout = 6 * 60 * 1000; // 6 Minuten (für Vercel's 5min Limit + Buffer)
+    const staleThreshold = 2 * 60 * 1000; // 2 Minuten - Lock gilt als stale wenn älter
     
     // Prüfe ob ein Lock existiert und ob er abgelaufen ist
     const existingLock = await kvStore.get(lockKey);
@@ -600,9 +622,22 @@ export async function acquireSyncLock(): Promise<boolean> {
       const lockAge = now - lockTimestamp;
       
       if (lockAge > lockTimeout) {
-        // Lock ist abgelaufen, lösche ihn
+        // Lock ist komplett abgelaufen (> 6 Min), lösche ihn
         console.log(`⏰ Lock ist abgelaufen (${Math.round(lockAge / 1000)}s alt) - lösche und setze neu`);
         await kvStore.del(lockKey);
+      } else if (lockAge > staleThreshold) {
+        // Lock ist stale (> 2 Min) - möglicherweise von abgestürztem Prozess
+        console.log(`⚠️  Lock ist stale (${Math.round(lockAge / 1000)}s alt) - prüfe Status`);
+        
+        // Prüfe ob tatsächlich noch ein Sync läuft
+        const stats = await loadSyncStats();
+        if (!stats?.isRunning) {
+          console.log('🔓 Kein aktiver Sync gefunden - lösche stale Lock');
+          await kvStore.del(lockKey);
+        } else {
+          console.log(`⏸️  Sync läuft bereits (${Math.round(lockAge / 1000)}s aktiv) - überspringe`);
+          return false;
+        }
       } else {
         console.log(`⏸️  Sync läuft bereits (${Math.round(lockAge / 1000)}s aktiv) - überspringe`);
         return false;
@@ -612,7 +647,7 @@ export async function acquireSyncLock(): Promise<boolean> {
     // Versuche Lock zu setzen mit NX (only if not exists) und PX (expire in milliseconds)
     const result = await kvStore.set(lockKey, now.toString(), {
       nx: true,  // Nur setzen wenn Key nicht existiert
-      px: lockTimeout  // Expire nach 5 Minuten
+      px: lockTimeout  // Expire nach 6 Minuten
     });
     
     if (result) {
@@ -622,14 +657,17 @@ export async function acquireSyncLock(): Promise<boolean> {
     
     console.log('⏸️  Sync läuft bereits - überspringe');
     return false;
-  } catch (error) {
-    console.error('❌ Fehler beim Lock-Handling:', error);
-    return true; // Im Fehlerfall trotzdem ausführen
+  } catch (error: any) {
+    console.error('❌ Fehler beim Lock-Handling:', error?.message || error);
+    // Im Fehlerfall trotzdem ausführen (fail-open statt fail-closed)
+    console.log('⚠️  Fahre trotz Lock-Fehler fort');
+    return true;
   }
 }
 
 /**
  * Gibt den Sync-Lock frei
+ * Mit robustem Error Handling
  */
 export async function releaseSyncLock(): Promise<void> {
   await initializeStore();
@@ -642,8 +680,19 @@ export async function releaseSyncLock(): Promise<void> {
     const lockKey = 'sync_lock';
     await kvStore.del(lockKey);
     console.log('🔓 Sync-Lock freigegeben');
-  } catch (error) {
-    console.error('❌ Fehler beim Lock-Release:', error);
+  } catch (error: any) {
+    console.error('❌ Fehler beim Lock-Release:', error?.message || error);
+    // Versuche es nochmal nach kurzer Pause
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const lockKey = 'sync_lock';
+      await kvStore.del(lockKey);
+      console.log('🔓 Sync-Lock freigegeben (2. Versuch)');
+    } catch (retryError: any) {
+      console.error('❌ Lock-Release fehlgeschlagen (2. Versuch):', retryError?.message || retryError);
+      // Lock wird automatisch nach Timeout ablaufen
+      console.log('⚠️  Lock wird automatisch ablaufen');
+    }
   }
 }
 

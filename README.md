@@ -15,6 +15,9 @@ Ein TypeScript-basierter Bot, der automatisch neue Medien (Bilder und Videos) au
 - ✅ **Parallele Verarbeitung**: Verarbeitet mehrere Ordner gleichzeitig (bis zu 6 parallel)
 - ✅ **Optimierte Upload-Geschwindigkeit**: Bis zu 7.200 Dateien/Stunde mit Telegram Limits
 - ✅ **Chunked Processing**: Automatische Fortsetzung bei langen Syncs (5-6 Stunden)
+- ✅ **Robustes Error Handling**: Fehler stoppen nicht den gesamten Upload-Prozess
+- ✅ **Automatisches Retry**: Bis zu 5 Versuche bei Fehlern mit intelligenter Fehlerbehandlung
+- ✅ **Automatische Fehler-Recovery**: Lock-Management mit automatischer Freigabe bei Fehlern
 - ✅ Automatische Synchronisierung alle 5 Minuten (Cron-Job)
 - ✅ Vercel-kompatibel mit Serverless Functions
 - ✅ Sichere Speicherung von Credentials in Umgebungsvariablen
@@ -226,6 +229,30 @@ Response:
 }
 ```
 
+### POST /api/force-unlock
+
+Gibt einen hängenden Sync-Lock manuell frei (nützlich bei Fehlern):
+
+```powershell
+Invoke-WebRequest -Uri "https://your-project.vercel.app/api/force-unlock" -Method POST | ConvertFrom-Json
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Lock erfolgreich freigegeben",
+  "previousLockStatus": {
+    "locked": true,
+    "age": 125000,
+    "timestamp": 1697198400000
+  },
+  "currentLockStatus": {
+    "locked": false
+  }
+}
+```
+
 ## ⏱️ Automatische Synchronisierung
 
 Die `vercel.json` ist bereits konfiguriert für automatische Synchronisierung alle 5 Minuten:
@@ -390,6 +417,9 @@ Der Bot nutzt **automatisches Chunked Processing**:
 - Verarbeitet in 4-Minuten-Chunks (unter 5-Min-Limit)
 - Setzt automatisch fort nach 2 Sekunden Pause
 - Kann beliebig lange Syncs (5-6 Stunden) durchführen
+- **Fehler in einem Ordner stoppen nicht die anderen** (Promise.allSettled)
+- **Automatisches Retry bei Fehlern** (bis zu 5 Versuche)
+- **Lock wird garantiert freigegeben** (auch bei Fehlern)
 
 **Konfiguration in vercel.json:**
 ```json
@@ -418,14 +448,21 @@ Invoke-WebRequest -Uri "https://your-project.vercel.app/api/status" | ConvertFro
 
 1. **Lock hängt?** Manuelles Release:
    ```powershell
-   Invoke-WebRequest -Uri "https://your-project.vercel.app/api/release-lock" -Method POST
+   Invoke-WebRequest -Uri "https://your-project.vercel.app/api/force-unlock" -Method POST
    ```
 
-2. **Optimierung anpassen:**
+2. **Fehler wiederholen sich?** Der Bot macht automatisch bis zu 5 Retry-Versuche mit:
+   - Intelligenter Wartezeit bei Rate Limits (basierend auf Telegram-Antwort)
+   - 5 Sekunden Pause bei Timeouts
+   - 10 Sekunden Pause bei Netzwerkfehlern
+   - Automatisches Überspringen bei permanenten Fehlern
+
+3. **Optimierung anpassen:**
    ```typescript
    // In lib/sync.ts
-   const CONCURRENT = 6;        // Mehr parallel = schneller
+   const CONCURRENT = 6;        // Mehr parallel = schneller (max 6-8 empfohlen)
    const MAX_EXECUTION_TIME = 4 * 60 * 1000;  // 4 Min pro Chunk
+   const maxRetries = 5;        // Anzahl Retry-Versuche bei Fehlern
    ```
 
 **Erfordert Vercel Pro Plan!**
