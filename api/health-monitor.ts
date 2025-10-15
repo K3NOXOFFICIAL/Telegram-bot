@@ -48,6 +48,9 @@ export default async function handler(
 
     // 1. Prüfe Sync Lock
     const lockStatus = await getSyncLockStatus();
+    const syncProgress = await getSyncProgress();
+    const syncStats = await loadSyncStats();
+    
     if (lockStatus.locked) {
       const lockAgeMinutes = lockStatus.age! / 60000;
       
@@ -55,19 +58,25 @@ export default async function handler(
         result.healthy = false;
         result.issues.push(`Sync Lock ist ${Math.round(lockAgeMinutes)} Minuten alt (max: ${MAX_LOCK_AGE_MINUTES})`);
         
-        // Auto-Recovery: Löse alten Lock
+        // Auto-Recovery: Löse alten Lock und prüfe ob Continuation nötig
         console.log(`⚠️  Alter Sync Lock erkannt (${Math.round(lockAgeMinutes)} min) - löse auf...`);
         await releaseSyncLock();
         result.actions.push('Alter Sync Lock wurde automatisch gelöst');
         
-        // Triggere neuen Sync
-        await triggerSync(req);
-        result.actions.push('Neuer Sync wurde getriggert');
+        // Prüfe ob unvollständiger Sync existiert
+        if (syncProgress && syncProgress.currentFolderIndex !== undefined) {
+          console.log(`📍 Unvollständiger Sync erkannt - triggere Continuation ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+          await triggerContinueSync(req);
+          result.actions.push(`Sync-Fortsetzung getriggert ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+        } else {
+          // Kein Progress gespeichert - starte neuen Sync
+          await triggerSync(req);
+          result.actions.push('Neuer Sync wurde getriggert');
+        }
       }
     }
 
     // 2. Prüfe Sync Progress (existiert nur während aktivem Sync)
-    const syncProgress = await getSyncProgress();
     // Progress wird nur während aktivem Sync gespeichert
     // Wenn kein Progress existiert aber Lock da ist = Problem
     if (lockStatus.locked && !syncProgress) {
@@ -86,31 +95,53 @@ export default async function handler(
     }
 
     // 3. Prüfe ob laufender Sync existiert aber nicht fortschreitet
-    const syncStats = await loadSyncStats();
-    if (syncStats && syncStats.startTime) {
-      const syncAgeMinutes = (Date.now() - new Date(syncStats.startTime).getTime()) / 60000;
+    
+    // Check if sync is marked as running
+    if (syncStats && (syncStats as any).isRunning) {
+      const lastUpdate = (syncStats as any).lastUpdate;
       
-      // Wenn Sync älter als 30 Minuten aber noch nicht abgeschlossen
-      if (syncAgeMinutes > 30 && !syncStats.endTime) {
-        result.healthy = false;
-        result.issues.push(`Sync läuft seit ${Math.round(syncAgeMinutes)} Minuten ohne Abschluss`);
+      if (lastUpdate) {
+        const stallMinutes = (Date.now() - lastUpdate) / 60000;
         
-        // Auto-Recovery: Force restart
-        console.log(`⚠️  Hängender Sync erkannt (${Math.round(syncAgeMinutes)} min) - Force Restart...`);
-        await releaseSyncLock();
-        await triggerSync(req);
-        result.actions.push('Hängender Sync wurde force-restarted');
+        // Wenn Sync als laufend markiert aber seit 15 Minuten kein Update
+        if (stallMinutes > MAX_PROGRESS_STALL_MINUTES) {
+          result.healthy = false;
+          result.issues.push(`Sync läuft aber kein Update seit ${Math.round(stallMinutes)} Minuten`);
+          
+          // Auto-Recovery: Prüfe ob Continuation möglich
+          console.log(`⚠️  Hängender Sync erkannt (kein Update seit ${Math.round(stallMinutes)} min) - Force Restart...`);
+          await releaseSyncLock();
+          
+          // Prüfe ob es gespeicherten Progress gibt
+          if (syncProgress && syncProgress.currentFolderIndex !== undefined) {
+            console.log(`📍 Setze hängenden Sync fort ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+            await triggerContinueSync(req);
+            result.actions.push(`Hängender Sync wurde fortgesetzt ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+          } else {
+            await triggerSync(req);
+            result.actions.push('Hängender Sync wurde neu gestartet');
+          }
+        }
       }
     }
+    
+    // 4. Prüfe ob unvollständiger Sync ohne Lock existiert (z.B. nach Crash)
+    if (!lockStatus.locked && syncProgress && syncProgress.currentFolderIndex !== undefined) {
+      console.log(`⚠️  Unvollständiger Sync ohne Lock erkannt - setze fort ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+      result.issues.push(`Unvollständiger Sync gefunden (Ordner ${syncProgress.currentFolderIndex + 1}/${syncProgress.totalFolders || '?'})`);
+      await triggerContinueSync(req);
+      result.actions.push(`Unvollständiger Sync wird fortgesetzt ab Ordner ${syncProgress.currentFolderIndex + 1}`);
+    }
 
-    // 4. Auto-Start: Wenn kein Sync läuft und keiner geplant ist
+    // 4. Auto-Start: DEAKTIVIERT - Nur bei kritischen Problemen neu starten
+    // Der reguläre Cron-Job sollte den Sync alle 5 Minuten starten
+    // Health Monitor ist nur für Recovery zuständig
+    /*
     if (!lockStatus.locked && !syncProgress) {
-      // Prüfe ob letzter Sync schon lange her ist (optional)
-      const lastSync = syncStats?.endTime;
+      const lastSync = (syncStats as any)?.lastUpdate;
       if (lastSync) {
-        const lastSyncMinutes = (Date.now() - new Date(lastSync).getTime()) / 60000;
+        const lastSyncMinutes = (Date.now() - lastSync) / 60000;
         
-        // Wenn letzter Sync älter als 2 Stunden (optional - kann angepasst werden)
         if (lastSyncMinutes > 120) {
           console.log(`ℹ️  Letzter Sync vor ${Math.round(lastSyncMinutes)} Minuten - Starte Routine-Sync`);
           await triggerSync(req);
@@ -118,13 +149,28 @@ export default async function handler(
         }
       }
     }
-
-    // Response
-    const statusCode = result.healthy ? 200 : 503;
+    */
     
-    return res.status(statusCode).json({
-      success: result.healthy,
+    // Log Health Status
+    console.log(`🏥 Health Check abgeschlossen:`);
+    console.log(`   - Healthy: ${result.healthy}`);
+    console.log(`   - Issues: ${result.issues.length}`);
+    console.log(`   - Actions: ${result.actions.length}`);
+    if (result.issues.length > 0) {
+      console.log(`   - Probleme:`, result.issues);
+    }
+    if (result.actions.length > 0) {
+      console.log(`   - Aktionen:`, result.actions);
+    }
+
+    // Response - WICHTIG: Immer 200 zurückgeben wenn Monitor erfolgreich lief
+    // Auch wenn Probleme erkannt wurden - der Monitor hat erfolgreich gearbeitet!
+    // 503 würde Vercel Cron als Fehler werten und weitere Ausführungen blockieren
+    
+    return res.status(200).json({
+      success: true, // Monitor lief erfolgreich
       health: result,
+      systemHealthy: result.healthy, // Separates Flag für System-Gesundheit
       message: result.healthy 
         ? 'Alle Services sind gesund' 
         : 'Probleme erkannt und Auto-Recovery durchgeführt',
@@ -153,20 +199,89 @@ async function triggerSync(req: VercelRequest): Promise<void> {
     
     console.log('▶️  Health Monitor: Triggere Sync an', syncUrl);
     
-    // Fire-and-forget request
-    fetch(syncUrl, {
-      method: 'POST',
-      headers: {
-        'x-auth-token': authToken || '',
-        'Content-Type': 'application/json'
-      },
-      signal: AbortSignal.timeout(2000)
-    }).catch(() => {
-      // Ignore errors - request wurde gesendet
-    });
+    // Verwende node-fetch oder nativen fetch (je nach Node Version)
+    // Fire-and-forget request mit Timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s Timeout
     
-    console.log('✅ Sync Request gesendet');
-  } catch (error) {
-    console.error('❌ Fehler beim Sync-Trigger:', error);
+    try {
+      const response = await fetch(syncUrl, {
+        method: 'POST',
+        headers: {
+          'x-auth-token': authToken || '',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Health-Monitor/1.0'
+        },
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log('✅ Sync Request erfolgreich gesendet (HTTP', response.status, ')');
+      } else {
+        console.log('⚠️  Sync Request gesendet aber unerwarteter Status:', response.status);
+      }
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      // Timeout oder Abort ist OK - Request wurde gesendet
+      if (fetchError.name === 'AbortError') {
+        console.log('✅ Sync Request gesendet (Timeout nach 3s - normal)');
+      } else {
+        console.log('⚠️  Sync Request möglicherweise gesendet, Fehler:', fetchError.message);
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Fehler beim Sync-Trigger:', error.message);
+    // Nicht weiterwerfen - Health Monitor soll trotzdem erfolgreich sein
+  }
+}
+
+/**
+ * Hilfsfunktion: Triggert Continuation eines unterbrochenen Syncs
+ */
+async function triggerContinueSync(req: VercelRequest): Promise<void> {
+  try {
+    const baseUrl = `https://${req.headers.host}`;
+    const continueUrl = `${baseUrl}/api/continue-sync`;
+    const authToken = process.env.SYNC_AUTH_TOKEN;
+    
+    console.log('▶️  Health Monitor: Triggere Continue-Sync an', continueUrl);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s Timeout
+    
+    try {
+      const response = await fetch(continueUrl, {
+        method: 'POST',
+        headers: {
+          'x-auth-token': authToken || '',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Health-Monitor/1.0'
+        },
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log('✅ Continue-Sync Request erfolgreich gesendet (HTTP', response.status, ')');
+      } else {
+        console.log('⚠️  Continue-Sync Request gesendet aber unerwarteter Status:', response.status);
+      }
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      // Timeout oder Abort ist OK - Request wurde gesendet
+      if (fetchError.name === 'AbortError') {
+        console.log('✅ Continue-Sync Request gesendet (Timeout nach 3s - normal)');
+      } else {
+        console.log('⚠️  Continue-Sync Request möglicherweise gesendet, Fehler:', fetchError.message);
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Fehler beim Continue-Sync-Trigger:', error.message);
+    // Nicht weiterwerfen - Health Monitor soll trotzdem erfolgreich sein
   }
 }

@@ -248,7 +248,8 @@ Response (gesund):
 Response (mit Auto-Recovery):
 ```json
 {
-  "success": false,
+  "success": true,
+  "systemHealthy": false,
   "health": {
     "healthy": false,
     "issues": [
@@ -264,7 +265,9 @@ Response (mit Auto-Recovery):
 }
 ```
 
-**📖 Vollständige Dokumentation:** [AUTO_RESTART.md](./AUTO_RESTART.md)
+**⚠️ WICHTIG:** Health Monitor gibt immer HTTP 200 zurück (auch bei erkannten Problemen), damit Vercel Cron Jobs weiter ausgeführt werden. Das `systemHealthy` Flag zeigt den tatsächlichen System-Status.
+
+**📖 Vollständige Dokumentation:** [AUTO_RESTART.md](./AUTO_RESTART.md) | [HEALTH_MONITOR_FIX.md](./HEALTH_MONITOR_FIX.md)
 
 ### POST /api/sync
 
@@ -445,7 +448,7 @@ Response:
 
 ## ⏱️ Automatische Synchronisierung
 
-Die `vercel.json` ist bereits konfiguriert für automatische Synchronisierung alle 5 Minuten:
+Die `vercel.json` ist konfiguriert für automatische Ausführung alle 5 Minuten:
 
 ```json
 {
@@ -453,9 +456,23 @@ Die `vercel.json` ist bereits konfiguriert für automatische Synchronisierung al
     {
       "path": "/api/sync",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/health-monitor",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
+```
+
+**Zwei Cron Jobs für maximale Zuverlässigkeit:**
+- 🔄 `/api/sync` - Führt reguläre Synchronisierung durch
+- 🏥 `/api/health-monitor` - Überwacht System und führt Auto-Recovery durch
+
+**Warum beide?**
+- Redundante Sicherheit
+- Health Monitor kann hängende Syncs erkennen und neu starten
+- Beide geben immer HTTP 200 zurück für zuverlässige Cron-Ausführung
 ```
 
 **Cron-Syntax:**
